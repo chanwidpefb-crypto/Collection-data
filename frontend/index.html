@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Collection Data</title>
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="logo">Collection<span>Data</span></div>
+        <div class="tagline">Modbus TCP &amp; OPC UA Collector</div>
+      </div>
+      <ul class="nav" id="nav">
+        <li><a href="#/connectors" data-route="connectors"><span class="icon">&#9881;</span> Connectors</a></li>
+        <li><a href="#/live" data-route="live"><span class="icon">&#9679;</span> Live Monitor</a></li>
+      </ul>
+      <div class="sidebar-footer">Collection Data v0.1</div>
+    </aside>
+    <div class="main">
+      <div class="topbar">
+        <div>
+          <h1 id="page-title">Connectors</h1>
+          <div class="sub" id="page-sub"></div>
+        </div>
+        <div id="topbar-actions"></div>
+      </div>
+      <div class="content" id="content"></div>
+    </div>
+  </div>
+  <div id="modal-root"></div>
+  <div id="toast-root"></div>
+  <script src="/js/api.js"></script>
+  <script src="/js/app.js"></script>
+</body>
+</html>

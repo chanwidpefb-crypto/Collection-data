@@ -67,21 +67,43 @@ function closeModal() { document.getElementById("modal-root").innerHTML = ""; }
 let liveRefreshTimer = null;
 function stopLiveRefresh() { if (liveRefreshTimer) { clearInterval(liveRefreshTimer); liveRefreshTimer = null; } }
 
+function homeRoute() {
+  return currentUser && currentUser.role !== "admin" ? "#/live" : "#/connectors";
+}
+
 async function route() {
+  if (!currentUser) return; // not logged in yet -- auth.js drives the login screen
   stopLiveRefresh();
-  const hash = location.hash || "#/connectors";
-  const parts = hash.replace(/^#\//, "").split("/");
+  if (typeof stopTrendAutoRefresh === "function") stopTrendAutoRefresh();
+  if (!location.hash) { location.hash = homeRoute(); return; }
+
+  const parts = location.hash.replace(/^#\//, "").split("/");
+  const adminOnlyRoutes = ["connectors", "users"];
+  if (adminOnlyRoutes.includes(parts[0]) && (!currentUser || currentUser.role !== "admin")) {
+    location.hash = homeRoute();
+    return;
+  }
+
   document.querySelectorAll("#nav a").forEach((a) => a.classList.remove("active"));
+  const activate = (name) => { const a = document.querySelector(`#nav a[data-route=${name}]`); if (a) a.classList.add("active"); };
 
   if (parts[0] === "connectors" && parts[1]) {
-    document.querySelector('#nav a[data-route=connectors]').classList.add("active");
+    activate("connectors");
     await viewConnectorDetail(Number(parts[1]));
-  } else if (parts[0] === "live") {
-    document.querySelector('#nav a[data-route=live]').classList.add("active");
-    await viewLiveMonitor();
-  } else {
-    document.querySelector('#nav a[data-route=connectors]').classList.add("active");
+  } else if (parts[0] === "connectors") {
+    activate("connectors");
     await viewConnectorsList();
+  } else if (parts[0] === "live") {
+    activate("live");
+    await viewLiveMonitor();
+  } else if (parts[0] === "trend") {
+    activate("trend");
+    await viewTrend();
+  } else if (parts[0] === "users") {
+    activate("users");
+    await viewUsers();
+  } else {
+    location.hash = homeRoute();
   }
 }
 window.addEventListener("hashchange", route);
@@ -671,5 +693,3 @@ async function viewLiveMonitor() {
   await refresh();
   liveRefreshTimer = setInterval(refresh, 1500);
 }
-
-route();

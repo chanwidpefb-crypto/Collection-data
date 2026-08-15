@@ -11,6 +11,7 @@ const Api = (() => {
         const data = await res.json();
         detail = data.detail || detail;
       } catch (e) { /* ignore */ }
+      if (res.status === 401 && path !== "/api/auth/login" && window.onUnauthorized) window.onUnauthorized();
       throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
     }
     if (res.status === 204) return null;

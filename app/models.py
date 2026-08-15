@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime
 import enum
 
-from sqlalchemy import (Boolean, DateTime, Enum, Float, ForeignKey, Integer,
+from sqlalchemy import (Boolean, DateTime, Enum, Float, ForeignKey, Index, Integer,
                          String, Text, UniqueConstraint)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -15,6 +15,11 @@ class ConnectorType(str, enum.Enum):
     MODBUS_TCP_SERVER = "modbus_tcp_server"
     OPCUA_CLIENT = "opcua_client"
     OPCUA_SERVER = "opcua_server"
+
+
+class UserRole(str, enum.Enum):
+    ADMIN = "admin"
+    VIEWER = "viewer"
 
 
 class ModbusArea(str, enum.Enum):
@@ -180,3 +185,35 @@ class OpcUaServerNode(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
 
     connector: Mapped[Connector] = relationship(back_populates="opcua_server_nodes")
+
+
+class TagHistory(Base):
+    """A single historian sample: one tag's value at one point in time."""
+
+    __tablename__ = "tag_history"
+    __table_args__ = (Index("ix_tag_history_tag_ts", "tag_name", "timestamp"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tag_name: Mapped[str] = mapped_column(String(128))
+    timestamp: Mapped[datetime.datetime] = mapped_column(DateTime)
+    value: Mapped[float] = mapped_column(Float)
+    quality: Mapped[str] = mapped_column(String(16), default="good")
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    username: Mapped[str] = mapped_column(String(64), unique=True)
+    password_hash: Mapped[str] = mapped_column(String(255))
+    role: Mapped[UserRole] = mapped_column(Enum(UserRole), default=UserRole.VIEWER)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=_now)
+
+
+class UserSession(Base):
+    __tablename__ = "user_sessions"
+
+    token: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=_now)
+    expires_at: Mapped[datetime.datetime] = mapped_column(DateTime)

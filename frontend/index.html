@@ -7,17 +7,15 @@
   <link rel="stylesheet" href="/css/style.css" />
 </head>
 <body>
-  <div class="app">
+  <div id="login-root"></div>
+  <div class="app" id="app-shell" style="display:none">
     <aside class="sidebar">
       <div class="brand">
         <div class="logo">Collection<span>Data</span></div>
         <div class="tagline">Modbus TCP &amp; OPC UA Collector</div>
       </div>
-      <ul class="nav" id="nav">
-        <li><a href="#/connectors" data-route="connectors"><span class="icon">&#9881;</span> Connectors</a></li>
-        <li><a href="#/live" data-route="live"><span class="icon">&#9679;</span> Live Monitor</a></li>
-      </ul>
-      <div class="sidebar-footer">Collection Data v0.1</div>
+      <ul class="nav" id="nav"></ul>
+      <div class="sidebar-footer" id="sidebar-footer"></div>
     </aside>
     <div class="main">
       <div class="topbar">
@@ -34,5 +32,8 @@
   <div id="toast-root"></div>
   <script src="/js/api.js"></script>
   <script src="/js/app.js"></script>
+  <script src="/js/trend.js"></script>
+  <script src="/js/users.js"></script>
+  <script src="/js/auth.js"></script>
 </body>
 </html>

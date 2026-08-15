@@ -5,11 +5,12 @@ from sqlalchemy.orm import Session
 
 from app import models, schemas
 from app.api.deps import get_driver_manager
+from app.auth import require_admin
 from app.database import get_db
 from app.drivers.manager import DriverManager
 from app.expression import ExpressionError, evaluate, referenced_names
 
-router = APIRouter(prefix="/api/connectors", tags=["connectors"])
+router = APIRouter(prefix="/api/connectors", tags=["connectors"], dependencies=[Depends(require_admin)])
 
 _DEFAULT_CONFIG_FACTORY = {
     models.ConnectorType.MODBUS_TCP_CLIENT: lambda cid: models.ModbusClientConfig(

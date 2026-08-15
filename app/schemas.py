@@ -6,7 +6,7 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.drivers.codec import DataType, WordOrder
-from app.models import ConnectorType, ModbusArea
+from app.models import ConnectorType, ModbusArea, UserRole
 
 # ---------------------------------------------------------------------------
 # Connector (top level)
@@ -196,3 +196,52 @@ class TagValue(BaseModel):
     quality: str
     timestamp: Optional[datetime.datetime] = None
     source_connector: Optional[str] = None
+
+
+class HistoryPoint(BaseModel):
+    t: datetime.datetime
+    v: float
+
+
+class HistorianStatus(BaseModel):
+    interval_ms: int
+    retention_days: int
+    total_points: int
+
+
+# ---------------------------------------------------------------------------
+# Auth / users
+# ---------------------------------------------------------------------------
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class UserOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    username: str
+    role: UserRole
+    created_at: datetime.datetime
+
+
+class UserCreate(BaseModel):
+    username: str
+    password: str = Field(min_length=8)
+    role: UserRole = UserRole.VIEWER
+
+
+class UserRoleUpdate(BaseModel):
+    role: UserRole
+
+
+class PasswordResetRequest(BaseModel):
+    new_password: str = Field(min_length=8)
+
+
+class ChangePasswordRequest(BaseModel):
+    old_password: str
+    new_password: str = Field(min_length=8)

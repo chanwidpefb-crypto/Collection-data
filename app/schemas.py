@@ -6,7 +6,7 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.drivers.codec import DataType, WordOrder
-from app.models import ConnectorType, ModbusArea, UserRole
+from app.models import ConnectorType, HistorianBackendType, ModbusArea, UserRole
 
 # ---------------------------------------------------------------------------
 # Connector (top level)
@@ -245,3 +245,51 @@ class PasswordResetRequest(BaseModel):
 class ChangePasswordRequest(BaseModel):
     old_password: str
     new_password: str = Field(min_length=8)
+
+
+# ---------------------------------------------------------------------------
+# Historian storage settings
+# ---------------------------------------------------------------------------
+
+
+class HistorianSettingsOut(BaseModel):
+    backend: HistorianBackendType
+    interval_ms: int
+    retention_days: int
+    ts_host: str
+    ts_port: int
+    ts_database: str
+    ts_user: str
+    ts_table: str
+    ts_sslmode: str
+    ts_password_set: bool
+    active_backend: HistorianBackendType
+    last_error: Optional[str] = None
+
+
+class HistorianSettingsIn(BaseModel):
+    backend: HistorianBackendType
+    interval_ms: int = Field(5000, ge=1000, le=3_600_000)
+    retention_days: int = Field(30, ge=1, le=3650)
+    ts_host: str = ""
+    ts_port: int = Field(5432, ge=1, le=65535)
+    ts_database: str = ""
+    ts_user: str = ""
+    ts_password: Optional[str] = None  # blank/omitted keeps the currently stored password
+    ts_table: str = Field("tag_history", pattern=r"^[A-Za-z_][A-Za-z0-9_]{0,62}$")
+    ts_sslmode: str = "prefer"
+
+
+class TimescaleConnectionTest(BaseModel):
+    ts_host: str
+    ts_port: int = Field(5432, ge=1, le=65535)
+    ts_database: str
+    ts_user: str
+    ts_password: str
+    ts_table: str = Field("tag_history", pattern=r"^[A-Za-z_][A-Za-z0-9_]{0,62}$")
+    ts_sslmode: str = "prefer"
+
+
+class ConnectionTestResult(BaseModel):
+    ok: bool
+    message: str

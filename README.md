@@ -27,13 +27,30 @@ Factor Expression รองรับตัวดำเนินการ `+ - * 
 
 ## Historian (เก็บข้อมูลย้อนหลัง) + Trend
 
-มีบริการพื้นหลัง (`app/historian.py`) คอย snapshot ค่าล่าสุดของทุก tag ใน Tag Store ลงตาราง
-`tag_history` ใน SQLite ตามรอบเวลาที่กำหนด (ค่าเริ่มต้นทุก 5 วินาที) พร้อม purge ข้อมูลที่เก่าเกิน
-retention อัตโนมัติ (ค่าเริ่มต้น 30 วัน) — ปรับได้ด้วย env var `HISTORIAN_INTERVAL_MS` และ
-`HISTORIAN_RETENTION_DAYS`
+มีบริการพื้นหลัง (`app/historian.py`) คอย snapshot ค่าล่าสุดของทุก tag ใน Tag Store ลง**พื้นที่เก็บ
+ข้อมูลย้อนหลัง (storage backend)** ตามรอบเวลาที่กำหนด (ค่าเริ่มต้นทุก 5 วินาที) พร้อม purge ข้อมูลที่เก่า
+เกิน retention อัตโนมัติ (ค่าเริ่มต้น 30 วัน)
 
-หน้า **Trend** ในเว็บใช้ข้อมูลนี้วาดกราฟเส้นย้อนหลัง เลือกได้หลาย tag พร้อมกัน (สูงสุด 8 เส้น) เลือกช่วง
-เวลาสำเร็จรูป (15m/1h/6h/24h/7d) มี crosshair + tooltop แสดงค่าทุก tag ที่จุดที่ชี้ และ auto-refresh ได้
+Storage backend **เลือกได้จากหน้า Settings** (admin เท่านั้น) โดยไม่ต้องแก้โค้ด มี 2 แบบ:
+
+| Backend | รายละเอียด |
+|---|---|
+| **SQLite** (ค่าเริ่มต้น) | เก็บในไฟล์ SQLite เดียวกับที่เก็บ config ทั้งหมด ไม่ต้องตั้งค่าอะไรเพิ่ม เหมาะกับการใช้งานเล็ก ๆ/ทดสอบ |
+| **TimescaleDB** | เก็บใน PostgreSQL/TimescaleDB แยกต่างหาก (ผ่าน `asyncpg`) กรอก Host/Port/Database/Username/Password/ ชื่อตาราง/SSL mode แล้วกด **Test Connection** ก่อน **Save** ได้ ถ้าเชื่อมต่อไม่สำเร็จระบบจะไม่บันทึกและ historian ยังคงทำงานกับ backend เดิมต่อไป (ไม่มีข้อมูลขาดหาย) |
+
+ตอน start จะสร้างตาราง (`CREATE TABLE IF NOT EXISTS`) และพยายามเปิดใช้ TimescaleDB hypertable ให้อัตโนมัติ
+(`CREATE EXTENSION IF NOT EXISTS timescaledb` + `create_hypertable(...)`) — ถ้า Postgres ปลายทางไม่ได้ติดตั้ง
+extension `timescaledb` ไว้ ระบบจะ fallback ไปใช้เป็นตาราง Postgres ธรรมดาแทนโดยอัตโนมัติ (log warning
+ไว้ให้เห็น) แอปยังทำงานได้ปกติ เพียงแต่ไม่ได้ partition ข้อมูลแบบ hypertable — ถ้าต้องการ hypertable จริง
+ต้องติดตั้ง extension บนฝั่ง Postgres server เอง (`CREATE EXTENSION timescaledb;` ด้วยสิทธิ์ superuser หรือ
+ใช้ TimescaleDB image สำเร็จรูป)
+
+เปลี่ยน backend ระหว่างที่แอปกำลังรันอยู่ได้เลยจากหน้า Settings โดยไม่ต้อง restart แอป — historian service
+จะปิดการเชื่อมต่อเดิมและสลับไปใช้ตัวใหม่ทันที (ข้อมูลเก่าที่อยู่ backend เดิมจะยังอยู่ที่เดิม ไม่ถูกย้ายตาม)
+
+หน้า **Trend** ในเว็บใช้ข้อมูลนี้วาดกราฟเส้นย้อนหลัง (อ่านผ่าน backend ที่ config ไว้เสมอ ไม่ว่าจะเป็น
+SQLite หรือ TimescaleDB) เลือกได้หลาย tag พร้อมกัน (สูงสุด 8 เส้น) เลือกช่วงเวลาสำเร็จรูป (15m/1h/6h/24h/7d)
+มี crosshair + tooltip แสดงค่าทุก tag ที่จุดที่ชี้ และ auto-refresh ได้
 
 ## User Login & สิทธิ์การใช้งาน
 
@@ -61,7 +78,9 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 เปิดเบราว์เซอร์ไปที่ `http://localhost:8000` จะเจอหน้า login ก่อน (ดูรหัสผ่าน admin เริ่มต้นจาก log
 ตามด้านบน) จากนั้นจะเจอหน้า **Connectors** สำหรับสร้าง/ตั้งค่า connector, **Live Monitor** สำหรับดูค่า
-ล่าสุดแบบเรียลไทม์, **Trend** สำหรับดูกราฟย้อนหลัง และ **Users** สำหรับจัดการผู้ใช้ (admin เท่านั้น)
+ล่าสุดแบบเรียลไทม์, **Trend** สำหรับดูกราฟย้อนหลัง, **Users** สำหรับจัดการผู้ใช้ และ **Settings** สำหรับ
+เลือก/ตั้งค่า storage backend ของ historian (SQLite หรือ TimescaleDB) — ทั้งหมด admin เท่านั้นยกเว้น Live
+Monitor กับ Trend
 
 ฐานข้อมูล (การตั้งค่าทั้งหมด) เก็บเป็นไฟล์ SQLite ที่ `data/collection_data.db` โดยอัตโนมัติ
 (เปลี่ยน path ได้ด้วย env var `COLLECTION_DATA_DB`) ส่วนค่าที่อ่านได้แบบเรียลไทม์เก็บใน memory เท่านั้น
@@ -80,7 +99,8 @@ app/
   database.py               SQLite engine/session
   tag_store.py               Tag Store กลางแบบ async-safe
   expression.py               Safe expression evaluator สำหรับ factor expression
-  historian.py                 บริการพื้นหลัง snapshot tag store -> tag_history + purge
+  historian.py                 HistorianService: snapshot loop + purge, สลับ backend runtime ได้
+  historian_backends.py         HistorianBackend interface: Sqlite / TimescaleDb (asyncpg)
   auth.py                        bcrypt hashing, session cookie, get_current_user/require_admin
   drivers/
     codec.py                  แปลงค่า <-> Modbus register (data type + word order)
@@ -95,15 +115,18 @@ app/
     values.py                        REST API: ค่า live, ประวัติ (history), รายชื่อ tag (ต้อง login)
     auth_routes.py                    login/logout/me/change-password
     users.py                          REST API: จัดการ user (admin only)
+    settings.py                        REST API: historian storage settings + test-connection (admin only)
 frontend/
   index.html, css/style.css
   js/api.js, app.js               shared fetch wrapper, router, Connectors + Live Monitor
   js/trend.js                      Trend page (SVG line chart)
   js/users.js                      Users management page
+  js/settings.js                    Settings page (historian storage backend)
   js/auth.js                       login screen, session bootstrap, role-aware nav
-tests/                               pytest: unit test ของ codec/expression/historian + auth/history
-                                      API tests + integration test เปิด Modbus server+client จริง
-                                      ผ่าน TCP loopback
+tests/                               pytest: unit test ของ codec/expression/historian + auth/history/
+                                      settings API tests + integration test เปิด Modbus server+client
+                                      จริงผ่าน TCP loopback + TimescaleDB backend test ผ่าน Postgres จริง
+                                      (skip อัตโนมัติถ้าไม่มี Postgres ให้ต่อ)
 ```
 
 ## รันเทส
@@ -127,3 +150,12 @@ pytest -q
 - Session cookie เป็น httponly + SameSite=Lax อายุ 7 วัน เก็บใน SQLite (`user_sessions`) ไม่ใช่ JWT
   จึง revoke ได้ทันทีด้วยการลบ session/logout ระบบไม่มี CORS เปิดไว้ (ค่า default ของ FastAPI) จึงไม่ต้อง
   ทำ CSRF token เพิ่มสำหรับการใช้งานทั่วไปในเครือข่ายปิด (OT network)
+- รหัสผ่านของ TimescaleDB เก็บเป็น plaintext ในตาราง `historian_settings` (เหมือนกับรหัสผ่านของ OPC UA
+  client ที่มีอยู่แล้วในระบบ) — ไม่ได้เข้ารหัสเพิ่ม ควรจำกัดสิทธิ์การเข้าถึงไฟล์ฐานข้อมูล/เครื่องเซิร์ฟเวอร์
+  ให้เหมาะสม
+- ชื่อตาราง TimescaleDB (`ts_table`) ถูก validate ทั้งฝั่ง API (`^[A-Za-z_][A-Za-z0-9_]{0,62}$`) และฝั่ง
+  backend เอง ก่อนนำไปต่อ string เป็น SQL DDL/DML เพื่อป้องกัน SQL injection ผ่านชื่อตาราง
+- ทดสอบ backend ของ TimescaleDB จริงได้ด้วยการรัน PostgreSQL ในเครื่อง (`pg_ctlcluster <ver> main start`
+  หรือ `docker run -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres`) แล้วตั้ง env var `TEST_PG_HOST`,
+  `TEST_PG_PORT`, `TEST_PG_USER`, `TEST_PG_PASSWORD`, `TEST_PG_DATABASE` ก่อนรัน `pytest` (ถ้าไม่มี Postgres
+  ให้ต่อ เทสกลุ่มนี้จะ skip อัตโนมัติ ไม่ fail)

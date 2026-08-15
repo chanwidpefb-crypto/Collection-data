@@ -9,7 +9,7 @@ from app import models, schemas
 from app.api.deps import get_historian
 from app.auth import get_current_user
 from app.database import get_db
-from app.historian import Historian
+from app.historian import HistorianService
 from app.tag_store import tag_store
 
 router = APIRouter(prefix="/api", tags=["values"], dependencies=[Depends(get_current_user)])
@@ -42,34 +42,26 @@ def _downsample(points: list[schemas.HistoryPoint], max_points: int) -> list[sch
 
 
 @router.get("/history", response_model=dict[str, list[schemas.HistoryPoint]])
-def history(
+async def history(
     tags: str = Query(..., description="comma-separated tag names"),
     start: datetime.datetime = Query(...),
     end: datetime.datetime = Query(...),
     max_points: int = Query(1500, ge=10, le=20000),
-    db: Session = Depends(get_db),
+    historian: HistorianService = Depends(get_historian),
 ):
     tag_names = [t.strip() for t in tags.split(",") if t.strip()]
     result: dict[str, list[schemas.HistoryPoint]] = {}
     for tag_name in tag_names:
-        rows = (
-            db.query(models.TagHistory)
-            .filter(models.TagHistory.tag_name == tag_name,
-                    models.TagHistory.timestamp >= start,
-                    models.TagHistory.timestamp <= end)
-            .order_by(models.TagHistory.timestamp)
-            .all()
-        )
-        points = [schemas.HistoryPoint(t=r.timestamp, v=r.value) for r in rows]
+        rows = await historian.query(tag_name, start, end)
+        points = [schemas.HistoryPoint(t=ts, v=v) for ts, v in rows]
         result[tag_name] = _downsample(points, max_points)
     return result
 
 
 @router.get("/history/status", response_model=schemas.HistorianStatus)
-def history_status(db: Session = Depends(get_db), historian: Historian = Depends(get_historian)):
-    total = db.query(models.TagHistory).count()
+async def history_status(historian: HistorianService = Depends(get_historian)):
     return schemas.HistorianStatus(
-        interval_ms=int(historian.interval_s * 1000),
-        retention_days=historian.retention_days,
-        total_points=total,
+        interval_ms=historian.config.interval_ms,
+        retention_days=historian.config.retention_days,
+        total_points=await historian.count(),
     )

@@ -188,7 +188,11 @@ class OpcUaServerNode(Base):
 
 
 class TagHistory(Base):
-    """A single historian sample: one tag's value at one point in time."""
+    """A single historian sample: one tag's value at one point in time.
+
+    Only used when the historian storage backend is set to "sqlite" -- when
+    set to "timescaledb" the samples live in the external Postgres/Timescale
+    database instead (see app/historian_backends.py)."""
 
     __tablename__ = "tag_history"
     __table_args__ = (Index("ix_tag_history_tag_ts", "tag_name", "timestamp"),)
@@ -198,6 +202,32 @@ class TagHistory(Base):
     timestamp: Mapped[datetime.datetime] = mapped_column(DateTime)
     value: Mapped[float] = mapped_column(Float)
     quality: Mapped[str] = mapped_column(String(16), default="good")
+
+
+class HistorianBackendType(str, enum.Enum):
+    SQLITE = "sqlite"
+    TIMESCALEDB = "timescaledb"
+
+
+class HistorianSettings(Base):
+    """Singleton row (id is always 1) holding the configured historian
+    storage backend and, when using TimescaleDB, its connection details."""
+
+    __tablename__ = "historian_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    backend: Mapped[HistorianBackendType] = mapped_column(Enum(HistorianBackendType),
+                                                            default=HistorianBackendType.SQLITE)
+    interval_ms: Mapped[int] = mapped_column(Integer, default=5000)
+    retention_days: Mapped[int] = mapped_column(Integer, default=30)
+
+    ts_host: Mapped[str] = mapped_column(String(255), default="")
+    ts_port: Mapped[int] = mapped_column(Integer, default=5432)
+    ts_database: Mapped[str] = mapped_column(String(128), default="")
+    ts_user: Mapped[str] = mapped_column(String(128), default="")
+    ts_password: Mapped[str] = mapped_column(String(255), default="")
+    ts_table: Mapped[str] = mapped_column(String(63), default="tag_history")
+    ts_sslmode: Mapped[str] = mapped_column(String(32), default="prefer")
 
 
 class User(Base):

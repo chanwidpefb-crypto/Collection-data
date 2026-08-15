@@ -8,6 +8,7 @@ const NAV_ITEMS = [
   { route: "live", label: "Live Monitor", icon: "&#9679;", adminOnly: false },
   { route: "trend", label: "Trend", icon: "&#128200;", adminOnly: false },
   { route: "users", label: "Users", icon: "&#128100;", adminOnly: true },
+  { route: "settings", label: "Settings", icon: "&#128736;", adminOnly: true },
 ];
 
 function renderNav() {

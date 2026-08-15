@@ -9,11 +9,11 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from app.api import auth_routes, connectors, users, values
+from app.api import auth_routes, connectors, settings, users, values
 from app.auth import ensure_default_admin
 from app.database import SessionLocal, init_db
 from app.drivers.manager import DriverManager
-from app.historian import Historian
+from app.historian import HistorianService
 from app.tag_store import tag_store
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -37,13 +37,14 @@ async def lifespan(app: FastAPI):
     app.state.driver_manager = manager
     await manager.start_all_enabled()
 
-    historian = Historian(SessionLocal, tag_store, HISTORIAN_INTERVAL_MS, HISTORIAN_RETENTION_DAYS)
+    historian = HistorianService(SessionLocal, tag_store)
+    await historian.load_settings_from_db(HISTORIAN_INTERVAL_MS, HISTORIAN_RETENTION_DAYS)
     app.state.historian = historian
     historian_task = asyncio.ensure_future(historian.run_forever())
 
     yield
 
-    historian.stop()
+    await historian.shutdown()
     historian_task.cancel()
     try:
         await historian_task
@@ -57,6 +58,7 @@ app.include_router(auth_routes.router)
 app.include_router(users.router)
 app.include_router(connectors.router)
 app.include_router(values.router)
+app.include_router(settings.router)
 
 if FRONTEND_DIR.exists():
     app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")

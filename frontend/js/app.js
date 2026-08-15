@@ -78,7 +78,7 @@ async function route() {
   if (!location.hash) { location.hash = homeRoute(); return; }
 
   const parts = location.hash.replace(/^#\//, "").split("/");
-  const adminOnlyRoutes = ["connectors", "users"];
+  const adminOnlyRoutes = ["connectors", "users", "settings"];
   if (adminOnlyRoutes.includes(parts[0]) && (!currentUser || currentUser.role !== "admin")) {
     location.hash = homeRoute();
     return;
@@ -102,6 +102,9 @@ async function route() {
   } else if (parts[0] === "users") {
     activate("users");
     await viewUsers();
+  } else if (parts[0] === "settings") {
+    activate("settings");
+    await viewSettings();
   } else {
     location.hash = homeRoute();
   }

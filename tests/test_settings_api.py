@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 
+import asyncpg
 import pytest
 
 from tests.conftest import set_admin_password
@@ -11,6 +12,16 @@ PG_PORT = int(os.environ.get("TEST_PG_PORT", "5432"))
 PG_USER = os.environ.get("TEST_PG_USER", "postgres")
 PG_PASSWORD = os.environ.get("TEST_PG_PASSWORD", "postgres")
 PG_DATABASE = os.environ.get("TEST_PG_DATABASE", "collection_data_test")
+
+
+async def _postgres_available() -> bool:
+    try:
+        conn = await asyncpg.connect(host=PG_HOST, port=PG_PORT, user=PG_USER,
+                                      password=PG_PASSWORD, database=PG_DATABASE, timeout=2)
+        await conn.close()
+        return True
+    except Exception:
+        return False
 
 
 def _login_admin(client):
@@ -68,8 +79,10 @@ def test_switch_to_timescaledb_with_bad_credentials_rejected(client):
     assert r.json()["backend"] == "sqlite"
 
 
-@pytest.mark.skipif(os.environ.get("SKIP_PG_TESTS") == "1", reason="no local postgres")
-def test_switch_to_timescaledb_with_good_credentials_succeeds(client):
+@pytest.mark.asyncio
+async def test_switch_to_timescaledb_with_good_credentials_succeeds(client):
+    if not await _postgres_available():
+        pytest.skip(f"no local PostgreSQL reachable at {PG_HOST}:{PG_PORT}")
     _login_admin(client)
     r = client.put("/api/settings/historian", json={
         "backend": "timescaledb", "ts_host": PG_HOST, "ts_port": PG_PORT, "ts_database": PG_DATABASE,

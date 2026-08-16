@@ -1,5 +1,40 @@
 # Collection Data
 
+## ติดตั้ง/เปิดใช้งาน (ง่ายสุด)
+
+**ไม่ต้องรู้ Python ก็ใช้ได้** — โหลดโปรเจกต์นี้มา แล้วดับเบิลคลิก/รันไฟล์เดียว ครั้งแรกจะติดตั้งให้เอง
+อัตโนมัติ (สร้าง environment + ลงไลบรารีที่ต้องใช้) ครั้งต่อไปจะเปิดไวขึ้นมาก แล้วเปิดเบราว์เซอร์ให้เองทันที
+เหมือนเปิดโปรแกรม/เกมทั่วไป:
+
+| ระบบปฏิบัติการ | วิธีเปิด |
+|---|---|
+| **Windows** | ดับเบิลคลิกไฟล์ `start.bat` |
+| **Linux / Mac** | เปิด Terminal ในโฟลเดอร์นี้แล้วรัน `./start.sh` |
+
+ต้องมี [Python 3.10+](https://www.python.org/downloads/) ติดตั้งอยู่ในเครื่องก่อน (ตอนติดตั้ง Python บน
+Windows ให้ติ๊ก "Add python.exe to PATH" ด้วย) — สคริปต์จะเช็คให้อัตโนมัติและแจ้งเตือนถ้ายังไม่มี
+
+รหัสผ่าน admin เริ่มต้น (สุ่มให้ตอนรันครั้งแรก) จะโชว์อยู่ในหน้าต่างที่รันสคริปต์ค้างไว้ — หาบรรทัดที่ขึ้นต้น
+ด้วย `Created default admin user` ปิดหน้าต่างนั้นเมื่อไหร่ = หยุดโปรแกรมเมื่อนั้น (เปิดใหม่รันสคริปต์ซ้ำได้เลย
+ข้อมูลที่ตั้งค่าไว้จะยังอยู่ครบ)
+
+### ถ้าถนัด Docker มากกว่า
+
+```bash
+docker compose up -d
+```
+
+คำสั่งเดียวจบ ไม่ต้องลง Python เอง เปิด `http://localhost:8000` ได้เลย (ดูรหัสผ่าน admin ด้วย
+`docker compose logs app | grep "Created default admin"`) — อยากได้ TimescaleDB มาพร้อมกันด้วยก็สั่ง
+`docker compose --profile timescaledb up -d` แทน (ดูรายละเอียดหัวข้อ Historian ด้านล่าง)
+
+> หมายเหตุ: `start.sh` ทดสอบรันจริงแล้วในสภาพแวดล้อมที่พัฒนา (ทั้งติดตั้งครั้งแรกและรันซ้ำ) ส่วน
+> `start.bat`/`docker-compose.yml` เขียนตามมาตรฐานและตรวจทานโค้ดแล้ว แต่ยังไม่ได้ทดสอบบนเครื่อง Windows/
+> Docker จริง เพราะสภาพแวดล้อมที่ใช้พัฒนาไม่มี Windows ให้ทดสอบ และ registry ของ Docker ถูกบล็อกไว้ —
+> ถ้าเจอปัญหาแจ้งได้เลย
+
+---
+
 โปรแกรมเก็บข้อมูล (data collection) จากอุปกรณ์อุตสาหกรรมผ่าน **Modbus TCP** และ **OPC UA**
 โดยแบ่งการเชื่อมต่อออกเป็น **Connector/Driver** แต่ละตัวมีหน้าตั้งค่าของตัวเอง ค่าที่อ่านได้จาก
 Connector แบบ Client ทั้งหมดจะถูกรวมไว้ใน **Tag Store** กลางตัวเดียว ซึ่ง Connector แบบ Server
@@ -127,6 +162,8 @@ tests/                               pytest: unit test ของ codec/expressio
                                       settings API tests + integration test เปิด Modbus server+client
                                       จริงผ่าน TCP loopback + TimescaleDB backend test ผ่าน Postgres จริง
                                       (skip อัตโนมัติถ้าไม่มี Postgres ให้ต่อ)
+start.sh, start.bat                   ตัวรัน/ติดตั้งอัตโนมัติสำหรับ Linux-Mac / Windows (ดูหัวข้อบนสุด)
+Dockerfile, docker-compose.yml          สำหรับคนที่ถนัด Docker มากกว่า
 ```
 
 ## รันเทส

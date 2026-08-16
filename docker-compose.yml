@@ -1,0 +1,42 @@
+# One-command install:  docker compose up -d
+# Then open http://localhost:8000 -- the admin password is printed once in
+# the logs on first start: docker compose logs app | grep "Created default admin"
+#
+# Want a bundled TimescaleDB too (selectable later from the Settings page)?
+#   docker compose --profile timescaledb up -d
+# then in Settings -> Historian Storage -> TimescaleDB, use:
+#   Host: timescaledb   Port: 5432   Database: collection_data
+#   Username: postgres  Password: collectiondata  (change it below first)
+
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - collection_data:/data
+    environment:
+      - HISTORIAN_INTERVAL_MS=5000
+      - HISTORIAN_RETENTION_DAYS=30
+    restart: unless-stopped
+    # Modbus TCP Server / OPC UA Server connectors open extra ports that you
+    # choose from the web UI at runtime, which Docker can't know about ahead
+    # of time. On Linux, the simplest fix is host networking -- uncomment the
+    # two lines below and remove the `ports:` block above. On Windows/Mac
+    # Docker Desktop (no host networking), add a matching "host:container"
+    # entry under `ports:` for each Modbus/OPC UA Server port you configure.
+    # network_mode: host
+
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    profiles: ["timescaledb"]
+    environment:
+      - POSTGRES_PASSWORD=collectiondata
+      - POSTGRES_DB=collection_data
+    volumes:
+      - timescaledb_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  collection_data:
+  timescaledb_data:

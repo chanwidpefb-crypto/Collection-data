@@ -1,0 +1,50 @@
+# For Portainer: Stacks -> Add stack -> Web editor -> paste this file -> Deploy.
+# Uses the prebuilt image from GitHub Container Registry (built automatically
+# by .github/workflows/docker-publish.yml on every push) so Portainer never
+# needs to build anything or clone the repo -- it just pulls and runs.
+#
+# First time: make sure the ghcr.io/chanwidpefb-crypto/collection-data
+# package is set to Public (repo -> Packages, on GitHub), or add ghcr.io
+# registry credentials in Portainer (Registries -> Add registry) if you'd
+# rather keep it private.
+#
+# After a code update, re-run the GitHub Action (or push a commit) to publish
+# a new "latest" image, then in Portainer: Stacks -> this stack -> Pull and
+# redeploy.
+
+services:
+  app:
+    image: ghcr.io/chanwidpefb-crypto/collection-data:latest
+    pull_policy: always
+    ports:
+      - "8000:8000"
+    volumes:
+      - collection_data:/data
+    environment:
+      - HISTORIAN_INTERVAL_MS=5000
+      - HISTORIAN_RETENTION_DAYS=30
+    restart: unless-stopped
+    # Modbus TCP Server / OPC UA Server connectors open extra ports that you
+    # choose from the web UI at runtime, which Docker can't know about ahead
+    # of time. On a Linux Docker host, the simplest fix is host networking --
+    # uncomment the line below and remove the `ports:` block above. Otherwise
+    # add a matching "host:container" entry under `ports:` for each such port
+    # you configure.
+    # network_mode: host
+
+  # Only starts if the stack's environment variables include
+  # COMPOSE_PROFILES=timescaledb (Portainer: set that under this stack's
+  # "Environment variables" before deploying).
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    profiles: ["timescaledb"]
+    environment:
+      - POSTGRES_PASSWORD=collectiondata
+      - POSTGRES_DB=collection_data
+    volumes:
+      - timescaledb_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  collection_data:
+  timescaledb_data:

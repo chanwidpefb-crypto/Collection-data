@@ -48,6 +48,32 @@ docker compose up -d
 > Docker จริง เพราะสภาพแวดล้อมที่ใช้พัฒนาไม่มี Windows ให้ทดสอบ และ registry ของ Docker ถูกบล็อกไว้ —
 > ถ้าเจอปัญหาแจ้งได้เลย
 
+### Deploy ผ่าน Portainer
+
+repo นี้มี GitHub Actions (`.github/workflows/docker-publish.yml`) build image ให้อัตโนมัติทุกครั้งที่มีการ
+push แล้ว publish ขึ้น GitHub Container Registry (`ghcr.io/chanwidpefb-crypto/collection-data:latest`) —
+แปลว่า **Portainer ไม่ต้อง build เอง แค่ pull image สำเร็จรูปไปรันเลย**
+
+1. ครั้งแรก: ไปที่หน้า repo บน GitHub → แท็บ **Packages** (หรือ Actions ให้รันจบก่อนสักครั้งถ้ายังไม่มี
+   package ขึ้นมา) → ตั้งค่า package `collection-data` เป็น **Public** (ง่ายสุด ไม่ต้องตั้ง credential ใน
+   Portainer) หรือถ้าอยากเก็บเป็น private ก็ไปเพิ่ม registry `ghcr.io` พร้อม token ในเมนู Portainer →
+   **Registries** แทน
+2. ใน Portainer: **Stacks → Add stack → Web editor**
+3. คัดลอกเนื้อหาไฟล์ [`docker-compose.portainer.yml`](docker-compose.portainer.yml) มาวางในกล่อง
+4. กด **Deploy the stack**
+5. เปิด `http://<IP เครื่อง Portainer>:8000` — ดูรหัสผ่าน admin เริ่มต้นได้จาก **Stacks → stack นี้ →
+   Logs** ของ container `app` (หาบรรทัด `Created default admin user`)
+
+อยากได้ TimescaleDB มาพร้อมกันด้วย: ก่อนกด Deploy ให้ไปที่ **Environment variables** ของ stack แล้วเพิ่ม
+`COMPOSE_PROFILES=timescaledb`
+
+อัปเดตโค้ดทีหลัง: push ขึ้น repo → GitHub Actions build image ใหม่อัตโนมัติ (~2-3 นาที) → กลับมาที่ Portainer
+→ **Stacks → stack นี้ → Pull and redeploy**
+
+ถ้าอยากให้ Portainer เป็นคน build เอง (ไม่ต้องพึ่ง GitHub Actions/GHCR) ก็ทำได้เหมือนกัน โดยเลือก
+**Repository** แทน Web editor ตอนสร้าง stack แล้วใส่ URL ของ repo นี้ + branch + ระบุ compose path เป็น
+`docker-compose.yml` (ตัวที่มี `build: .`) — วิธีนี้ Portainer จะ clone + build เองทุกครั้งที่กด redeploy
+
 ---
 
 โปรแกรมเก็บข้อมูล (data collection) จากอุปกรณ์อุตสาหกรรมผ่าน **Modbus TCP** และ **OPC UA**
@@ -178,7 +204,9 @@ tests/                               pytest: unit test ของ codec/expressio
                                       จริงผ่าน TCP loopback + TimescaleDB backend test ผ่าน Postgres จริง
                                       (skip อัตโนมัติถ้าไม่มี Postgres ให้ต่อ)
 start.sh, start.bat                   ตัวรัน/ติดตั้งอัตโนมัติสำหรับ Linux-Mac / Windows (ดูหัวข้อบนสุด)
-Dockerfile, docker-compose.yml          สำหรับคนที่ถนัด Docker มากกว่า
+Dockerfile, docker-compose.yml          สำหรับคนที่ถนัด Docker มากกว่า (build เอง)
+docker-compose.portainer.yml            สำหรับ deploy ผ่าน Portainer (ใช้ image สำเร็จรูปจาก GHCR)
+.github/workflows/docker-publish.yml    GitHub Actions: build + push image ขึ้น GHCR อัตโนมัติ
 ```
 
 ## รันเทส

@@ -18,6 +18,21 @@ Windows ให้ติ๊ก "Add python.exe to PATH" ด้วย) — สค�
 ด้วย `Created default admin user` ปิดหน้าต่างนั้นเมื่อไหร่ = หยุดโปรแกรมเมื่อนั้น (เปิดใหม่รันสคริปต์ซ้ำได้เลย
 ข้อมูลที่ตั้งค่าไว้จะยังอยู่ครบ)
 
+**ถ้าติดตั้งครั้งแรกแล้วเจอ error แบบ "Could not find a version that satisfies the requirement"**
+หรือ pip โชว์รายการเวอร์ชันที่มีให้เก่ามาก (เช่นสูงสุดแค่ปี 2022) — แปลว่าเครื่องนั้นตั้ง pip ให้โหลดจาก
+mirror/index อื่นที่ไม่ใช่ pypi.org ตัวจริง (พบได้ในบางองค์กร) ปกติสคริปต์จะบังคับใช้ pypi.org ให้อยู่แล้ว
+แต่ถ้าเครือข่ายคุณเข้า pypi.org ตรงไม่ได้ (ต้องผ่าน mirror ภายในเท่านั้น) ให้ตั้งค่า mirror ที่ใช้ได้จริงก่อนรัน:
+
+```bash
+# Linux/Mac
+COLLECTION_DATA_PIP_INDEX_URL=https://your-mirror/simple ./start.sh
+```
+```bat
+:: Windows (รันใน Command Prompt ก่อนดับเบิลคลิก start.bat หรือแก้ตั้งเป็น system env var)
+set COLLECTION_DATA_PIP_INDEX_URL=https://your-mirror/simple
+start.bat
+```
+
 ### ถ้าถนัด Docker มากกว่า
 
 ```bash

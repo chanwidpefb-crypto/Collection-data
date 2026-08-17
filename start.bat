@@ -13,9 +13,17 @@ if errorlevel 1 (
 if not exist .venv (
   echo First-time setup: creating a virtual environment...
   python -m venv .venv
+  if errorlevel 1 (
+    echo.
+    echo Could not create a virtual environment. See the error above.
+    pause
+    exit /b 1
+  )
 )
 
 call .venv\Scripts\activate.bat
+
+if not defined COLLECTION_DATA_PIP_INDEX_URL set COLLECTION_DATA_PIP_INDEX_URL=https://pypi.org/simple
 
 set REQ_HASH_FILE=.venv\.requirements.sha256
 set NEW_HASH=
@@ -23,18 +31,41 @@ for /f "skip=1 delims=" %%H in ('certutil -hashfile requirements.txt SHA256 2^>n
   if not defined NEW_HASH set NEW_HASH=%%H
 )
 
+set NEED_INSTALL=
 if not defined NEW_HASH (
-  echo Installing dependencies ^(first run only, this can take a minute^)...
-  python -m pip install --quiet --upgrade pip
-  pip install --quiet -r requirements.txt
+  set NEED_INSTALL=1
 ) else (
   set OLD_HASH=
   if exist "%REQ_HASH_FILE%" set /p OLD_HASH=<"%REQ_HASH_FILE%"
-  if not "%NEW_HASH%"=="%OLD_HASH%" (
-    echo Installing dependencies ^(first run only, this can take a minute^)...
-    python -m pip install --quiet --upgrade pip
-    pip install --quiet -r requirements.txt
-    > "%REQ_HASH_FILE%" echo %NEW_HASH%
+  if not "%NEW_HASH%"=="%OLD_HASH%" set NEED_INSTALL=1
+)
+
+if defined NEED_INSTALL (
+  echo Installing dependencies ^(first run only, this can take a minute^)...
+  echo Using package index: %COLLECTION_DATA_PIP_INDEX_URL%
+  python -m pip install --quiet --no-cache-dir --index-url %COLLECTION_DATA_PIP_INDEX_URL% --upgrade pip
+  if errorlevel 1 (
+    echo.
+    echo Could not upgrade pip. See the error above.
+    echo If your network requires a private package mirror, set the
+    echo COLLECTION_DATA_PIP_INDEX_URL environment variable to it and run this file again.
+    pause
+    exit /b 1
+  )
+  pip install --quiet --no-cache-dir --index-url %COLLECTION_DATA_PIP_INDEX_URL% -r requirements.txt
+  if errorlevel 1 (
+    echo.
+    echo Could not install dependencies. See the error above.
+    echo This usually means pip resolved an outdated or broken package index ^(for
+    echo example, a stale corporate mirror^). The default index above is the real
+    echo pypi.org, which should have everything needed. If your network requires a
+    echo private mirror instead, set the COLLECTION_DATA_PIP_INDEX_URL environment
+    echo variable to it and run this file again.
+    pause
+    exit /b 1
+  )
+  if defined NEW_HASH (
+    echo %NEW_HASH% > "%REQ_HASH_FILE%"
   )
 )
 

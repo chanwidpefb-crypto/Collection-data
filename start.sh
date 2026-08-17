@@ -30,9 +30,19 @@ REQ_HASH_FILE=".venv/.requirements.sha256"
 OLD_HASH="$(cat "$REQ_HASH_FILE" 2>/dev/null || true)"
 
 if [ "$NEW_HASH" != "$OLD_HASH" ]; then
+  PIP_INDEX="${COLLECTION_DATA_PIP_INDEX_URL:-https://pypi.org/simple}"
   echo "Installing dependencies (first run only, this can take a minute)..."
-  pip install --quiet --upgrade pip
-  pip install --quiet -r requirements.txt
+  echo "Using package index: $PIP_INDEX"
+  if ! pip install --quiet --no-cache-dir --index-url "$PIP_INDEX" --upgrade pip \
+      || ! pip install --quiet --no-cache-dir --index-url "$PIP_INDEX" -r requirements.txt; then
+    echo ""
+    echo "Could not install dependencies -- see the error above."
+    echo "This usually means pip resolved an outdated or broken package index (for"
+    echo "example, a stale corporate mirror). The default index above is the real"
+    echo "pypi.org, which should have everything needed. If your network requires a"
+    echo "private mirror instead, set COLLECTION_DATA_PIP_INDEX_URL to it and rerun."
+    exit 1
+  fi
   echo "$NEW_HASH" > "$REQ_HASH_FILE"
 fi
 

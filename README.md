@@ -97,9 +97,28 @@ Connector แบบ Client ทั้งหมดจะถูกรวมไว�
 | **OPC UA Server** | เปิด OPC UA Server ของตัวเอง | Endpoint URL, Server Name, Namespace URI, และต่อ Node: เลือกค่าจาก Tag Store ผ่าน **Factor Expression** |
 
 Factor Expression รองรับตัวดำเนินการ `+ - * / ( )` และฟังก์ชัน `min/max/abs/round/sqrt/floor/ceil`
-โดยอ้างอิงชื่อ tag ที่มาจาก Connector ฝั่ง Client ได้โดยตรง (มี dropdown "Insert system tag" ในหน้า UI
-ให้เลือกแทนการพิมพ์เอง) — ประเมินผลด้วย safe evaluator (`app/expression.py`) ที่จำกัดเฉพาะนิพจน์ทาง
-คณิตศาสตร์ ไม่สามารถเรียกโค้ดอื่นได้
+โดยอ้างอิงชื่อ tag ที่มาจาก Connector ฝั่ง Client ได้โดยตรง (มี dropdown "Insert tag" ในหน้า UI ให้เลือก
+แทนการพิมพ์เอง) — ประเมินผลด้วย safe evaluator (`app/expression.py`) ที่จำกัดเฉพาะนิพจน์ทางคณิตศาสตร์
+ไม่สามารถเรียกโค้ดอื่นได้
+
+### หน้า Register/Node เป็นตารางแบบ spreadsheet + Import/Export CSV
+
+หน้าตั้งค่า register/node ของทั้ง 4 ชนิด connector เป็นตารางแก้ไขได้ทันที (คล้าย Excel) — คลิกช่องไหน
+พิมพ์ได้เลย ไม่ต้องเปิด popup ทีละอัน:
+
+- **+ Add Row** เพิ่มแถวว่างต่อท้ายตาราง กรอกแล้วกด **Save Changes** ครั้งเดียวเพื่อบันทึกทุกแถวที่แก้/เพิ่ม
+  พร้อมกัน (แถวที่ไม่ได้แก้ไขจะไม่ถูกส่งซ้ำ, restart driver แค่ครั้งเดียวตอนจบแทนที่จะ restart ทุกแถว)
+- ปุ่ม **&times;** ท้ายแถวลบทันที (มี confirm) สำหรับแถวที่มีอยู่แล้ว ส่วนแถวใหม่ที่ยังไม่กด Save จะแค่ลบออก
+  จากหน้าจอ ไม่ยิง API
+- **Export CSV** โหลดไฟล์ CSV ของ register/node ทั้งหมดใน connector นั้น ใช้เป็น**template**สำหรับ
+  connector อื่นได้ (แก้ชื่อ/address ใน Excel แล้ว import เข้า connector ใหม่)
+- **Import CSV** อัปโหลดไฟล์ CSV กลับเข้ามา เป็นแบบ **upsert**: แถวที่ key ตรงกับของเดิม (`tag_name` สำหรับ
+  Modbus/OPC UA Client, `area`+`address` สำหรับ Modbus Server, `node_name` สำหรับ OPC UA Server) จะอัปเดต
+  ทับ ส่วนที่ไม่ตรงจะสร้างใหม่ — แถวที่ผิดพลาด (เช่น address ไม่ใช่ตัวเลข, expression ผิด syntax, tag ซ้ำ)
+  จะถูกข้ามและแจ้งเป็นรายการ error พร้อมเลขแถว ไม่ทำให้แถวอื่นที่ถูกต้อง import ไม่สำเร็จไปด้วย
+
+รูปแบบคอลัมน์ CSV ตรงกับชื่อ field ที่ใช้ในหน้าเว็บ/API พอดี (เช่น `tag_name,area,address,data_type,
+word_order,factor,offset,enabled,description` สำหรับ Modbus Client) — export ออกมาดูตัวอย่างได้เลย
 
 ## Historian (เก็บข้อมูลย้อนหลัง) + Trend
 
@@ -178,6 +197,7 @@ app/
   historian.py                 HistorianService: snapshot loop + purge, สลับ backend runtime ได้
   historian_backends.py         HistorianBackend interface: Sqlite / TimescaleDb (asyncpg)
   auth.py                        bcrypt hashing, session cookie, get_current_user/require_admin
+  csv_io.py                       CSV read/write helpers ใช้ร่วมกันโดย import/export endpoint ทั้งหมด
   drivers/
     codec.py                  แปลงค่า <-> Modbus register (data type + word order)
     base.py                    Base class ของทุก driver
@@ -187,7 +207,8 @@ app/
     opcua_server.py                OPC UA Server driver (push ค่าเข้า node ตาม publish interval)
     manager.py                     DriverManager: start/stop/restart driver ตาม config ใน DB
   api/
-    connectors.py                   REST API: CRUD connector + config + register/node (admin only)
+    connectors.py                   REST API: CRUD connector + config + register/node + CSV import/export
+                                      (admin only; write endpoints accept ?restart=false for batch saves)
     values.py                        REST API: ค่า live, ประวัติ (history), รายชื่อ tag (ต้อง login)
     auth_routes.py                    login/logout/me/change-password
     users.py                          REST API: จัดการ user (admin only)
@@ -195,6 +216,7 @@ app/
 frontend/
   index.html, css/style.css
   js/api.js, app.js               shared fetch wrapper, router, Connectors + Live Monitor
+  js/grid.js                       reusable spreadsheet-style register/node grid (add row/save/delete)
   js/trend.js                      Trend page (SVG line chart)
   js/users.js                      Users management page
   js/settings.js                    Settings page (historian storage backend)

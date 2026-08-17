@@ -275,7 +275,14 @@ async function viewConnectorDetail(id) {
     <div class="card">
       <div class="card-header">
         <h2 id="registers-title"></h2>
-        <button class="btn btn-primary btn-sm" id="btn-add-register">+ Add</button>
+        <div class="toolbar" style="gap:8px" id="registers-toolbar">
+          <span id="grid-tag-insert-wrap"></span>
+          <button class="btn btn-sm" id="btn-export-csv">Export CSV</button>
+          <button class="btn btn-sm" id="btn-import-csv">Import CSV</button>
+          <input type="file" id="csv-file-input" accept=".csv" style="display:none" />
+          <button class="btn btn-sm" id="btn-add-row">+ Add Row</button>
+          <button class="btn btn-primary btn-sm" id="btn-save-grid">Save Changes</button>
+        </div>
       </div>
       <div class="card-body" id="registers-table"></div>
     </div>
@@ -285,7 +292,7 @@ async function viewConnectorDetail(id) {
   document.getElementById("btn-restart").onclick = async () => { await Api.post(`/api/connectors/${id}/restart`); toast("Restarted"); viewConnectorDetail(id); };
 
   renderConfigForm(c);
-  renderRegistersSection(c);
+  renderRegistersSection(c, running);
 }
 
 function renderConfigForm(c) {
@@ -357,306 +364,128 @@ async function saveConfig(connectorId, endpoint, fields, types) {
   } catch (e) { toast(e.message, true); }
 }
 
-// --- Registers / nodes sections ---------------------------------------
-function renderRegistersSection(c) {
-  const titleEl = document.getElementById("registers-title");
-  const addBtn = document.getElementById("btn-add-register");
+// --- Registers / nodes sections (spreadsheet-style grid, see grid.js) --
+let currentGrid = null;
+
+function registerGridConfig(c) {
+  const base = `/api/connectors/${c.id}`;
   if (c.type === "modbus_tcp_client") {
-    titleEl.textContent = "Registers";
-    addBtn.onclick = () => openModbusClientRegisterModal(c);
-    renderModbusClientRegisters(c);
-  } else if (c.type === "modbus_tcp_server") {
-    titleEl.textContent = "Registers (exposed to Modbus masters)";
-    addBtn.onclick = () => openModbusServerRegisterModal(c);
-    renderModbusServerRegisters(c);
-  } else if (c.type === "opcua_client") {
-    titleEl.textContent = "Nodes";
-    addBtn.onclick = () => openOpcUaClientNodeModal(c);
-    renderOpcUaClientNodes(c);
-  } else if (c.type === "opcua_server") {
-    titleEl.textContent = "Nodes (exposed to OPC UA clients)";
-    addBtn.onclick = () => openOpcUaServerNodeModal(c);
-    renderOpcUaServerNodes(c);
+    return {
+      title: "Registers", apiBase: `${base}/modbus-client-registers`, rows: c.modbus_client_registers,
+      idKey: "id", hasExpression: false,
+      columns: [
+        { key: "tag_name", label: "Tag Name", type: "text", placeholder: "tank1_level" },
+        { key: "area", label: "Area", type: "select", options: MODBUS_AREAS },
+        { key: "address", label: "Address", type: "number" },
+        { key: "data_type", label: "Type", type: "select", options: DATA_TYPES.map((d) => ({ value: d, label: d })) },
+        { key: "word_order", label: "Order", type: "select", options: WORD_ORDERS.map((d) => ({ value: d, label: d })) },
+        { key: "factor", label: "Factor", type: "number", step: "any" },
+        { key: "offset", label: "Offset", type: "number", step: "any" },
+        { key: "enabled", label: "On", type: "checkbox" },
+        { key: "description", label: "Description", type: "text" },
+      ],
+      defaultRow: { tag_name: "", area: "holding_register", address: 0, data_type: "uint16", word_order: "ABCD", factor: 1, offset: 0, enabled: true, description: "" },
+    };
   }
-}
-
-function dataTypeOptions(selected) {
-  return DATA_TYPES.map((d) => `<option value="${d}" ${d === selected ? "selected" : ""}>${d}</option>`).join("");
-}
-function wordOrderOptions(selected) {
-  return WORD_ORDERS.map((d) => `<option value="${d}" ${d === selected ? "selected" : ""}>${d}</option>`).join("");
-}
-function areaOptions(selected) {
-  return MODBUS_AREAS.map((a) => `<option value="${a.value}" ${a.value === selected ? "selected" : ""}>${a.label}</option>`).join("");
-}
-
-// ---- Modbus client registers ----
-function renderModbusClientRegisters(c) {
-  const el = document.getElementById("registers-table");
-  const regs = c.modbus_client_registers;
-  if (!regs.length) { el.innerHTML = `<div class="empty-state">No registers yet.</div>`; return; }
-  el.innerHTML = `<table>
-    <thead><tr><th>Tag Name</th><th>Area</th><th>Address</th><th>Type</th><th>Order</th><th>Factor</th><th>Offset</th><th></th></tr></thead>
-    <tbody>${regs.map((r) => `
-      <tr>
-        <td><b>${esc(r.tag_name)}</b>${r.description ? `<div class="hint" style="color:var(--text-dim);font-size:11px">${esc(r.description)}</div>` : ""}</td>
-        <td class="mono">${esc(r.area)}</td>
-        <td class="mono">${r.address}</td>
-        <td class="mono">${esc(r.data_type)}</td>
-        <td class="mono">${esc(r.word_order)}</td>
-        <td>${r.factor}</td>
-        <td>${r.offset}</td>
-        <td class="actions-cell">
-          <button class="btn btn-sm" data-edit="${r.id}">Edit</button>
-          <button class="btn btn-sm btn-danger" data-del="${r.id}">Del</button>
-        </td>
-      </tr>`).join("")}</tbody></table>`;
-  el.querySelectorAll("[data-edit]").forEach((b) => b.onclick = () => openModbusClientRegisterModal(c, regs.find((r) => r.id == b.dataset.edit)));
-  el.querySelectorAll("[data-del]").forEach((b) => b.onclick = async () => {
-    if (!confirm("Delete this register?")) return;
-    try { await Api.del(`/api/connectors/${c.id}/modbus-client-registers/${b.dataset.del}`); toast("Deleted"); viewConnectorDetail(c.id); }
-    catch (e) { toast(e.message, true); }
-  });
-}
-
-function openModbusClientRegisterModal(c, reg) {
-  const isEdit = !!reg;
-  showModal(isEdit ? "Edit Register" : "Add Register", `
-    <div class="form-grid">
-      ${ff("Variable Name (tag)", `<input type="text" name="tag_name" value="${esc(reg?.tag_name || "")}" placeholder="tank1_level" />`)}
-      ${ff("Area", `<select name="area">${areaOptions(reg?.area || "holding_register")}</select>`)}
-      ${ff("Address", `<input type="number" name="address" value="${reg?.address ?? 0}" min="0" max="65535" />`)}
-      ${ff("Data Type", `<select name="data_type">${dataTypeOptions(reg?.data_type || "uint16")}</select>`)}
-      ${ff("Word/Byte Order", `<select name="word_order">${wordOrderOptions(reg?.word_order || "ABCD")}</select>`, "only applies to multi-register types")}
-      ${ff("Factor (multiplier)", `<input type="number" step="any" name="factor" value="${reg?.factor ?? 1}" />`)}
-      ${ff("Offset", `<input type="number" step="any" name="offset" value="${reg?.offset ?? 0}" />`)}
-      ${ff("Description (optional)", `<input type="text" name="description" value="${esc(reg?.description || "")}" />`, "", true)}
-    </div>
-    <div class="checkbox-row" style="margin-top:12px">
-      <input type="checkbox" name="enabled" id="reg-enabled" ${reg?.enabled !== false ? "checked" : ""} />
-      <label for="reg-enabled">Enabled</label>
-    </div>
-    <div class="form-actions">
-      <button class="btn" id="cancel">Cancel</button>
-      <button class="btn btn-primary" id="save">${isEdit ? "Save" : "Add"}</button>
-    </div>`);
-  document.getElementById("cancel").onclick = closeModal;
-  document.getElementById("save").onclick = async () => {
-    const body = {
-      tag_name: qv("tag_name"), area: qv("area"), address: parseInt(qv("address"), 10),
-      data_type: qv("data_type"), word_order: qv("word_order"),
-      factor: parseFloat(qv("factor")), offset: parseFloat(qv("offset")),
-      description: qv("description") || null, enabled: document.getElementById("reg-enabled").checked,
+  if (c.type === "modbus_tcp_server") {
+    return {
+      title: "Registers (exposed to Modbus masters)", apiBase: `${base}/modbus-server-registers`, rows: c.modbus_server_registers,
+      idKey: "id", hasExpression: true,
+      columns: [
+        { key: "name", label: "Name", type: "text", placeholder: "tank1_out" },
+        { key: "area", label: "Area", type: "select", options: MODBUS_AREAS },
+        { key: "address", label: "Address", type: "number" },
+        { key: "data_type", label: "Type", type: "select", options: DATA_TYPES.map((d) => ({ value: d, label: d })) },
+        { key: "word_order", label: "Order", type: "select", options: WORD_ORDERS.map((d) => ({ value: d, label: d })) },
+        { key: "expression", label: "Value / Factor Expression", type: "expression", placeholder: "tank1_level * 1.0" },
+        { key: "enabled", label: "On", type: "checkbox" },
+      ],
+      defaultRow: { name: "", area: "holding_register", address: 0, data_type: "uint16", word_order: "ABCD", expression: "", enabled: true },
     };
-    try {
-      if (isEdit) await Api.put(`/api/connectors/${c.id}/modbus-client-registers/${reg.id}`, body);
-      else await Api.post(`/api/connectors/${c.id}/modbus-client-registers`, body);
-      closeModal(); toast("Saved"); viewConnectorDetail(c.id);
-    } catch (e) { toast(e.message, true); }
+  }
+  if (c.type === "opcua_client") {
+    return {
+      title: "Nodes", apiBase: `${base}/opcua-client-nodes`, rows: c.opcua_client_nodes,
+      idKey: "id", hasExpression: false,
+      columns: [
+        { key: "tag_name", label: "Tag Name", type: "text", placeholder: "tank1_level" },
+        { key: "node_id", label: "Node ID", type: "text", placeholder: "ns=2;s=Channel1.Device1.Tag1" },
+        { key: "factor", label: "Factor", type: "number", step: "any" },
+        { key: "offset", label: "Offset", type: "number", step: "any" },
+        { key: "enabled", label: "On", type: "checkbox" },
+        { key: "description", label: "Description", type: "text" },
+      ],
+      defaultRow: { tag_name: "", node_id: "", factor: 1, offset: 0, enabled: true, description: "" },
+    };
+  }
+  // opcua_server
+  return {
+    title: "Nodes (exposed to OPC UA clients)", apiBase: `${base}/opcua-server-nodes`, rows: c.opcua_server_nodes,
+    idKey: "id", hasExpression: true,
+    columns: [
+      { key: "node_name", label: "Node Name", type: "text", placeholder: "Tank1Level" },
+      { key: "expression", label: "Value / Factor Expression", type: "expression", placeholder: "tank1_level * 1.0" },
+      { key: "enabled", label: "On", type: "checkbox" },
+    ],
+    defaultRow: { node_name: "", expression: "", enabled: true },
   };
 }
 
-// ---- Modbus server registers ----
-function renderModbusServerRegisters(c) {
-  const el = document.getElementById("registers-table");
-  const regs = c.modbus_server_registers;
-  if (!regs.length) { el.innerHTML = `<div class="empty-state">No registers yet.</div>`; return; }
-  el.innerHTML = `<table>
-    <thead><tr><th>Name</th><th>Area</th><th>Address</th><th>Type</th><th>Order</th><th>Expression</th><th></th></tr></thead>
-    <tbody>${regs.map((r) => `
-      <tr>
-        <td><b>${esc(r.name)}</b></td>
-        <td class="mono">${esc(r.area)}</td>
-        <td class="mono">${r.address}</td>
-        <td class="mono">${esc(r.data_type)}</td>
-        <td class="mono">${esc(r.word_order)}</td>
-        <td class="mono">${esc(r.expression)}</td>
-        <td class="actions-cell">
-          <button class="btn btn-sm" data-edit="${r.id}">Edit</button>
-          <button class="btn btn-sm btn-danger" data-del="${r.id}">Del</button>
-        </td>
-      </tr>`).join("")}</tbody></table>`;
-  el.querySelectorAll("[data-edit]").forEach((b) => b.onclick = () => openModbusServerRegisterModal(c, regs.find((r) => r.id == b.dataset.edit)));
-  el.querySelectorAll("[data-del]").forEach((b) => b.onclick = async () => {
-    if (!confirm("Delete this register?")) return;
-    try { await Api.del(`/api/connectors/${c.id}/modbus-server-registers/${b.dataset.del}`); toast("Deleted"); viewConnectorDetail(c.id); }
-    catch (e) { toast(e.message, true); }
-  });
-}
+async function renderRegistersSection(c, isRunning) {
+  const config = registerGridConfig(c);
+  document.getElementById("registers-title").textContent = config.title;
 
-async function openModbusServerRegisterModal(c, reg) {
-  const isEdit = !!reg;
-  let knownTags = [];
-  try { knownTags = await Api.get("/api/tags/known"); } catch (e) { /* ignore */ }
-  showModal(isEdit ? "Edit Register" : "Add Register", `
-    <div class="form-grid">
-      ${ff("Name", `<input type="text" name="name" value="${esc(reg?.name || "")}" placeholder="tank1_out" />`)}
-      ${ff("Area", `<select name="area">${areaOptions(reg?.area || "holding_register")}</select>`)}
-      ${ff("Address", `<input type="number" name="address" value="${reg?.address ?? 0}" min="0" max="65535" />`)}
-      ${ff("Data Type", `<select name="data_type">${dataTypeOptions(reg?.data_type || "uint16")}</select>`)}
-      ${ff("Word/Byte Order", `<select name="word_order">${wordOrderOptions(reg?.word_order || "ABCD")}</select>`)}
-    </div>
-    <div class="form-field full" style="margin-top:14px">
-      <label>Value / Factor Expression</label>
-      <textarea name="expression" placeholder="tank1_level * 1.0">${esc(reg?.expression || "")}</textarea>
-      <div class="tag-picker">
-        <select id="tag-insert">
-          <option value="">Insert system tag...</option>
-          ${knownTags.map((t) => `<option value="${t}">${esc(t)}</option>`).join("")}
-        </select>
-        <span class="hint">supports + - * / ( ) and min/max/abs/round/sqrt</span>
-      </div>
-    </div>
-    <div class="checkbox-row" style="margin-top:12px">
-      <input type="checkbox" name="enabled" id="reg-enabled" ${reg?.enabled !== false ? "checked" : ""} />
-      <label for="reg-enabled">Enabled</label>
-    </div>
-    <div class="form-actions">
-      <button class="btn" id="cancel">Cancel</button>
-      <button class="btn btn-primary" id="save">${isEdit ? "Save" : "Add"}</button>
-    </div>`);
-  document.getElementById("tag-insert").addEventListener("change", (e) => {
-    const ta = document.querySelector('[name="expression"]');
-    if (e.target.value) { ta.value += (ta.value && !ta.value.endsWith(" ") ? " " : "") + e.target.value; e.target.value = ""; ta.focus(); }
+  const tagInsertWrap = document.getElementById("grid-tag-insert-wrap");
+  if (config.hasExpression) {
+    let knownTags = [];
+    try { knownTags = await Api.get("/api/tags/known"); } catch (e) { /* ignore */ }
+    tagInsertWrap.innerHTML = `<select id="grid-tag-insert" style="max-width:180px">
+      <option value="">Insert tag...</option>
+      ${knownTags.map((t) => `<option value="${esc(t)}">${esc(t)}</option>`).join("")}
+    </select>`;
+    document.getElementById("grid-tag-insert").addEventListener("change", (e) => {
+      const target = lastFocusedExpressionInput;
+      if (e.target.value && target) {
+        target.value += (target.value && !target.value.endsWith(" ") ? " " : "") + e.target.value;
+        target.dispatchEvent(new Event("input"));
+        target.focus();
+      }
+      e.target.value = "";
+    });
+  } else {
+    tagInsertWrap.innerHTML = "";
+  }
+
+  currentGrid = createRegisterGrid({
+    container: document.getElementById("registers-table"),
+    columns: config.columns, rows: config.rows, apiBase: config.apiBase,
+    connectorId: c.id, isRunning, defaultRow: config.defaultRow,
   });
-  document.getElementById("cancel").onclick = closeModal;
-  document.getElementById("save").onclick = async () => {
-    const body = {
-      name: qv("name"), area: qv("area"), address: parseInt(qv("address"), 10),
-      data_type: qv("data_type"), word_order: qv("word_order"), expression: qv("expression"),
-      enabled: document.getElementById("reg-enabled").checked,
-    };
-    try {
-      if (isEdit) await Api.put(`/api/connectors/${c.id}/modbus-server-registers/${reg.id}`, body);
-      else await Api.post(`/api/connectors/${c.id}/modbus-server-registers`, body);
-      closeModal(); toast("Saved"); viewConnectorDetail(c.id);
-    } catch (e) { toast(e.message, true); }
+
+  document.getElementById("btn-add-row").onclick = () => currentGrid.addBlankRow();
+  document.getElementById("btn-save-grid").onclick = () => currentGrid.saveAll();
+  document.getElementById("btn-export-csv").onclick = () => {
+    window.open(`${config.apiBase}/export`, "_blank");
   };
-}
-
-// ---- OPC UA client nodes ----
-function renderOpcUaClientNodes(c) {
-  const el = document.getElementById("registers-table");
-  const nodes = c.opcua_client_nodes;
-  if (!nodes.length) { el.innerHTML = `<div class="empty-state">No nodes yet.</div>`; return; }
-  el.innerHTML = `<table>
-    <thead><tr><th>Tag Name</th><th>Node ID</th><th>Factor</th><th>Offset</th><th></th></tr></thead>
-    <tbody>${nodes.map((n) => `
-      <tr>
-        <td><b>${esc(n.tag_name)}</b>${n.description ? `<div class="hint" style="color:var(--text-dim);font-size:11px">${esc(n.description)}</div>` : ""}</td>
-        <td class="mono">${esc(n.node_id)}</td>
-        <td>${n.factor}</td>
-        <td>${n.offset}</td>
-        <td class="actions-cell">
-          <button class="btn btn-sm" data-edit="${n.id}">Edit</button>
-          <button class="btn btn-sm btn-danger" data-del="${n.id}">Del</button>
-        </td>
-      </tr>`).join("")}</tbody></table>`;
-  el.querySelectorAll("[data-edit]").forEach((b) => b.onclick = () => openOpcUaClientNodeModal(c, nodes.find((n) => n.id == b.dataset.edit)));
-  el.querySelectorAll("[data-del]").forEach((b) => b.onclick = async () => {
-    if (!confirm("Delete this node?")) return;
-    try { await Api.del(`/api/connectors/${c.id}/opcua-client-nodes/${b.dataset.del}`); toast("Deleted"); viewConnectorDetail(c.id); }
-    catch (e) { toast(e.message, true); }
-  });
-}
-
-function openOpcUaClientNodeModal(c, node) {
-  const isEdit = !!node;
-  showModal(isEdit ? "Edit Node" : "Add Node", `
-    <div class="form-grid">
-      ${ff("Variable Name (tag)", `<input type="text" name="tag_name" value="${esc(node?.tag_name || "")}" placeholder="tank1_level" />`)}
-      ${ff("Node ID", `<input type="text" name="node_id" value="${esc(node?.node_id || "")}" placeholder="ns=2;s=Channel1.Device1.Tag1" />`, "", true)}
-      ${ff("Factor (multiplier)", `<input type="number" step="any" name="factor" value="${node?.factor ?? 1}" />`)}
-      ${ff("Offset", `<input type="number" step="any" name="offset" value="${node?.offset ?? 0}" />`)}
-      ${ff("Description (optional)", `<input type="text" name="description" value="${esc(node?.description || "")}" />`, "", true)}
-    </div>
-    <div class="checkbox-row" style="margin-top:12px">
-      <input type="checkbox" name="enabled" id="node-enabled" ${node?.enabled !== false ? "checked" : ""} />
-      <label for="node-enabled">Enabled</label>
-    </div>
-    <div class="form-actions">
-      <button class="btn" id="cancel">Cancel</button>
-      <button class="btn btn-primary" id="save">${isEdit ? "Save" : "Add"}</button>
-    </div>`);
-  document.getElementById("cancel").onclick = closeModal;
-  document.getElementById("save").onclick = async () => {
-    const body = {
-      tag_name: qv("tag_name"), node_id: qv("node_id"),
-      factor: parseFloat(qv("factor")), offset: parseFloat(qv("offset")),
-      description: qv("description") || null, enabled: document.getElementById("node-enabled").checked,
-    };
+  document.getElementById("btn-import-csv").onclick = () => document.getElementById("csv-file-input").click();
+  document.getElementById("csv-file-input").onchange = async (e) => {
+    const file = e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    const formData = new FormData();
+    formData.append("file", file);
     try {
-      if (isEdit) await Api.put(`/api/connectors/${c.id}/opcua-client-nodes/${node.id}`, body);
-      else await Api.post(`/api/connectors/${c.id}/opcua-client-nodes`, body);
-      closeModal(); toast("Saved"); viewConnectorDetail(c.id);
-    } catch (e) { toast(e.message, true); }
-  };
-}
-
-// ---- OPC UA server nodes ----
-function renderOpcUaServerNodes(c) {
-  const el = document.getElementById("registers-table");
-  const nodes = c.opcua_server_nodes;
-  if (!nodes.length) { el.innerHTML = `<div class="empty-state">No nodes yet.</div>`; return; }
-  el.innerHTML = `<table>
-    <thead><tr><th>Node Name</th><th>Expression</th><th></th></tr></thead>
-    <tbody>${nodes.map((n) => `
-      <tr>
-        <td><b>${esc(n.node_name)}</b></td>
-        <td class="mono">${esc(n.expression)}</td>
-        <td class="actions-cell">
-          <button class="btn btn-sm" data-edit="${n.id}">Edit</button>
-          <button class="btn btn-sm btn-danger" data-del="${n.id}">Del</button>
-        </td>
-      </tr>`).join("")}</tbody></table>`;
-  el.querySelectorAll("[data-edit]").forEach((b) => b.onclick = () => openOpcUaServerNodeModal(c, nodes.find((n) => n.id == b.dataset.edit)));
-  el.querySelectorAll("[data-del]").forEach((b) => b.onclick = async () => {
-    if (!confirm("Delete this node?")) return;
-    try { await Api.del(`/api/connectors/${c.id}/opcua-server-nodes/${b.dataset.del}`); toast("Deleted"); viewConnectorDetail(c.id); }
-    catch (e) { toast(e.message, true); }
-  });
-}
-
-async function openOpcUaServerNodeModal(c, node) {
-  const isEdit = !!node;
-  let knownTags = [];
-  try { knownTags = await Api.get("/api/tags/known"); } catch (e) { /* ignore */ }
-  showModal(isEdit ? "Edit Node" : "Add Node", `
-    <div class="form-field full">
-      <label>Node Name</label>
-      <input type="text" name="node_name" value="${esc(node?.node_name || "")}" placeholder="Tank1Level" />
-    </div>
-    <div class="form-field full" style="margin-top:14px">
-      <label>Value / Factor Expression</label>
-      <textarea name="expression" placeholder="tank1_level * 1.0">${esc(node?.expression || "")}</textarea>
-      <div class="tag-picker">
-        <select id="tag-insert">
-          <option value="">Insert system tag...</option>
-          ${knownTags.map((t) => `<option value="${t}">${esc(t)}</option>`).join("")}
-        </select>
-        <span class="hint">supports + - * / ( ) and min/max/abs/round/sqrt</span>
-      </div>
-    </div>
-    <div class="checkbox-row" style="margin-top:12px">
-      <input type="checkbox" name="enabled" id="node-enabled" ${node?.enabled !== false ? "checked" : ""} />
-      <label for="node-enabled">Enabled</label>
-    </div>
-    <div class="form-actions">
-      <button class="btn" id="cancel">Cancel</button>
-      <button class="btn btn-primary" id="save">${isEdit ? "Save" : "Add"}</button>
-    </div>`);
-  document.getElementById("tag-insert").addEventListener("change", (e) => {
-    const ta = document.querySelector('[name="expression"]');
-    if (e.target.value) { ta.value += (ta.value && !ta.value.endsWith(" ") ? " " : "") + e.target.value; e.target.value = ""; ta.focus(); }
-  });
-  document.getElementById("cancel").onclick = closeModal;
-  document.getElementById("save").onclick = async () => {
-    const body = { node_name: qv("node_name"), expression: qv("expression"), enabled: document.getElementById("node-enabled").checked };
-    try {
-      if (isEdit) await Api.put(`/api/connectors/${c.id}/opcua-server-nodes/${node.id}`, body);
-      else await Api.post(`/api/connectors/${c.id}/opcua-server-nodes`, body);
-      closeModal(); toast("Saved"); viewConnectorDetail(c.id);
-    } catch (e) { toast(e.message, true); }
+      const result = await fetch(`${config.apiBase}/import`, { method: "POST", body: formData });
+      const body = await result.json();
+      if (!result.ok) throw new Error(body.detail || "import failed");
+      const parts = [`${body.created} added`, `${body.updated} updated`];
+      if (body.errors.length) parts.push(`${body.errors.length} error(s)`);
+      toast(`Import: ${parts.join(", ")}`, body.errors.length > 0);
+      if (body.errors.length) showModal("Import Errors", `<ul>${body.errors.map((e) => `<li>${esc(e)}</li>`).join("")}</ul>
+        <div class="form-actions"><button class="btn btn-primary" id="close-import-errors">Close</button></div>`);
+      if (document.getElementById("close-import-errors")) document.getElementById("close-import-errors").onclick = closeModal;
+      viewConnectorDetail(c.id);
+    } catch (err) { toast(err.message, true); }
   };
 }
 

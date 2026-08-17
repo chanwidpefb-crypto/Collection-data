@@ -59,3 +59,10 @@ def test_invalid_syntax_raises():
 def test_referenced_names():
     assert referenced_names("a * 2 + b") == {"a", "b"}
     assert referenced_names("min(a, max(b, c))") == {"a", "b", "c"}
+
+
+def test_referenced_names_raises_expression_error_on_invalid_syntax():
+    # regression: referenced_names() used to leak a raw SyntaxError instead of
+    # ExpressionError, which callers only catch the latter for.
+    with pytest.raises(ExpressionError):
+        referenced_names("this is not valid python-ish syntax +")

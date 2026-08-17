@@ -92,7 +92,10 @@ def evaluate(expression: str, variables: Mapping[str, float]) -> float:
 
 def referenced_names(expression: str) -> set[str]:
     """Return the set of tag names referenced by an expression (for validation/UI)."""
-    tree = ast.parse(expression, mode="eval")
+    try:
+        tree = ast.parse(expression, mode="eval")
+    except SyntaxError as exc:
+        raise ExpressionError(f"invalid syntax: {exc}") from exc
     call_func_ids = {n.func.id for n in ast.walk(tree)
                       if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
     return {n.id for n in ast.walk(tree)

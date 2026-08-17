@@ -198,6 +198,12 @@ class TagValue(BaseModel):
     source_connector: Optional[str] = None
 
 
+class ImportResult(BaseModel):
+    created: int = 0
+    updated: int = 0
+    errors: list[str] = []
+
+
 class HistoryPoint(BaseModel):
     t: datetime.datetime
     v: float

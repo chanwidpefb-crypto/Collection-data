@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
 from sqlalchemy.orm import Session
 
 from app import models, schemas
 from app.api.deps import get_driver_manager
 from app.auth import require_admin
+from app.csv_io import parse_bool, parse_float, read_csv, write_csv
 from app.database import get_db
 from app.drivers.manager import DriverManager
 from app.expression import ExpressionError, evaluate, referenced_names
@@ -35,11 +36,18 @@ async def _restart_if_running(manager: DriverManager, connector_id: int) -> None
         await manager.restart(connector_id)
 
 
-def _validate_expression(expression: str) -> None:
+def _expression_error(expression: str) -> str | None:
     try:
         evaluate(expression, {name: 0.0 for name in referenced_names(expression)})
+        return None
     except ExpressionError as exc:
-        raise HTTPException(422, f"invalid expression: {exc}") from exc
+        return str(exc)
+
+
+def _validate_expression(expression: str) -> None:
+    err = _expression_error(expression)
+    if err:
+        raise HTTPException(422, f"invalid expression: {err}")
 
 
 @router.get("", response_model=list[schemas.ConnectorStatus])
@@ -212,6 +220,7 @@ def list_modbus_client_registers(connector_id: int, db: Session = Depends(get_db
 
 @router.post("/{connector_id}/modbus-client-registers", response_model=schemas.ModbusClientRegisterOut, status_code=201)
 async def create_modbus_client_register(connector_id: int, payload: schemas.ModbusClientRegisterIn,
+                                         restart: bool = Query(True),
                                          db: Session = Depends(get_db), manager: DriverManager = Depends(get_driver_manager)):
     connector = _get_connector_or_404(db, connector_id)
     _require_type(connector, models.ConnectorType.MODBUS_TCP_CLIENT)
@@ -222,12 +231,14 @@ async def create_modbus_client_register(connector_id: int, payload: schemas.Modb
     db.add(reg)
     db.commit()
     db.refresh(reg)
-    await _restart_if_running(manager, connector_id)
+    if restart:
+        await _restart_if_running(manager, connector_id)
     return reg
 
 
 @router.put("/{connector_id}/modbus-client-registers/{register_id}", response_model=schemas.ModbusClientRegisterOut)
 async def update_modbus_client_register(connector_id: int, register_id: int, payload: schemas.ModbusClientRegisterIn,
+                                         restart: bool = Query(True),
                                          db: Session = Depends(get_db), manager: DriverManager = Depends(get_driver_manager)):
     reg = db.get(models.ModbusClientRegister, register_id)
     if reg is None or reg.connector_id != connector_id:
@@ -241,20 +252,82 @@ async def update_modbus_client_register(connector_id: int, register_id: int, pay
         setattr(reg, field, value)
     db.commit()
     db.refresh(reg)
-    await _restart_if_running(manager, connector_id)
+    if restart:
+        await _restart_if_running(manager, connector_id)
     return reg
 
 
 @router.delete("/{connector_id}/modbus-client-registers/{register_id}", status_code=204)
-async def delete_modbus_client_register(connector_id: int, register_id: int, db: Session = Depends(get_db),
+async def delete_modbus_client_register(connector_id: int, register_id: int, restart: bool = Query(True),
+                                         db: Session = Depends(get_db),
                                          manager: DriverManager = Depends(get_driver_manager)):
     reg = db.get(models.ModbusClientRegister, register_id)
     if reg is None or reg.connector_id != connector_id:
         raise HTTPException(404, "register not found")
     db.delete(reg)
     db.commit()
-    await _restart_if_running(manager, connector_id)
+    if restart:
+        await _restart_if_running(manager, connector_id)
     return None
+
+
+@router.get("/{connector_id}/modbus-client-registers/export")
+def export_modbus_client_registers(connector_id: int, db: Session = Depends(get_db)):
+    connector = _get_connector_or_404(db, connector_id)
+    _require_type(connector, models.ConnectorType.MODBUS_TCP_CLIENT)
+    fields = ["tag_name", "area", "address", "data_type", "word_order", "factor", "offset", "enabled", "description"]
+    rows = [{
+        "tag_name": r.tag_name, "area": r.area.value if hasattr(r.area, "value") else r.area,
+        "address": r.address, "data_type": r.data_type, "word_order": r.word_order,
+        "factor": r.factor, "offset": r.offset, "enabled": r.enabled, "description": r.description or "",
+    } for r in connector.modbus_client_registers]
+    csv_text = write_csv(fields, rows)
+    return Response(content=csv_text, media_type="text/csv",
+                     headers={"Content-Disposition": f'attachment; filename="{connector.name}_registers.csv"'})
+
+
+@router.post("/{connector_id}/modbus-client-registers/import", response_model=schemas.ImportResult)
+async def import_modbus_client_registers(connector_id: int, file: UploadFile = File(...),
+                                          db: Session = Depends(get_db),
+                                          manager: DriverManager = Depends(get_driver_manager)):
+    connector = _get_connector_or_404(db, connector_id)
+    _require_type(connector, models.ConnectorType.MODBUS_TCP_CLIENT)
+    rows = read_csv((await file.read()).decode("utf-8-sig"))
+    existing_by_tag = {r.tag_name: r for r in connector.modbus_client_registers}
+    created = updated = 0
+    errors: list[str] = []
+
+    for i, row in enumerate(rows, start=2):
+        tag_name = (row.get("tag_name") or "").strip()
+        try:
+            if not tag_name:
+                raise ValueError("tag_name is required")
+            payload = schemas.ModbusClientRegisterIn(
+                tag_name=tag_name, area=(row.get("area") or "").strip(), address=int(row["address"]),
+                data_type=(row.get("data_type") or "uint16").strip(),
+                word_order=(row.get("word_order") or "ABCD").strip(),
+                factor=parse_float(row.get("factor"), 1.0), offset=parse_float(row.get("offset"), 0.0),
+                enabled=parse_bool(row.get("enabled"), True), description=(row.get("description") or None),
+            )
+        except Exception as exc:  # noqa: BLE001 - collected as a per-row import error
+            errors.append(f"row {i}: {exc}")
+            continue
+
+        existing = existing_by_tag.get(tag_name)
+        if existing is not None:
+            for field, value in payload.model_dump().items():
+                setattr(existing, field, value)
+            updated += 1
+        else:
+            if db.query(models.OpcUaClientNode).filter(models.OpcUaClientNode.tag_name == tag_name).first():
+                errors.append(f"row {i}: tag name '{tag_name}' is already used by an OPC UA node")
+                continue
+            db.add(models.ModbusClientRegister(connector_id=connector_id, **payload.model_dump()))
+            created += 1
+
+    db.commit()
+    await _restart_if_running(manager, connector_id)
+    return schemas.ImportResult(created=created, updated=updated, errors=errors)
 
 
 # ---------------------------------------------------------------------------
@@ -271,6 +344,7 @@ def list_modbus_server_registers(connector_id: int, db: Session = Depends(get_db
 
 @router.post("/{connector_id}/modbus-server-registers", response_model=schemas.ModbusServerRegisterOut, status_code=201)
 async def create_modbus_server_register(connector_id: int, payload: schemas.ModbusServerRegisterIn,
+                                         restart: bool = Query(True),
                                          db: Session = Depends(get_db), manager: DriverManager = Depends(get_driver_manager)):
     connector = _get_connector_or_404(db, connector_id)
     _require_type(connector, models.ConnectorType.MODBUS_TCP_SERVER)
@@ -279,12 +353,14 @@ async def create_modbus_server_register(connector_id: int, payload: schemas.Modb
     db.add(reg)
     db.commit()
     db.refresh(reg)
-    await _restart_if_running(manager, connector_id)
+    if restart:
+        await _restart_if_running(manager, connector_id)
     return reg
 
 
 @router.put("/{connector_id}/modbus-server-registers/{register_id}", response_model=schemas.ModbusServerRegisterOut)
 async def update_modbus_server_register(connector_id: int, register_id: int, payload: schemas.ModbusServerRegisterIn,
+                                         restart: bool = Query(True),
                                          db: Session = Depends(get_db), manager: DriverManager = Depends(get_driver_manager)):
     reg = db.get(models.ModbusServerRegister, register_id)
     if reg is None or reg.connector_id != connector_id:
@@ -294,20 +370,84 @@ async def update_modbus_server_register(connector_id: int, register_id: int, pay
         setattr(reg, field, value)
     db.commit()
     db.refresh(reg)
-    await _restart_if_running(manager, connector_id)
+    if restart:
+        await _restart_if_running(manager, connector_id)
     return reg
 
 
 @router.delete("/{connector_id}/modbus-server-registers/{register_id}", status_code=204)
-async def delete_modbus_server_register(connector_id: int, register_id: int, db: Session = Depends(get_db),
+async def delete_modbus_server_register(connector_id: int, register_id: int, restart: bool = Query(True),
+                                         db: Session = Depends(get_db),
                                          manager: DriverManager = Depends(get_driver_manager)):
     reg = db.get(models.ModbusServerRegister, register_id)
     if reg is None or reg.connector_id != connector_id:
         raise HTTPException(404, "register not found")
     db.delete(reg)
     db.commit()
-    await _restart_if_running(manager, connector_id)
+    if restart:
+        await _restart_if_running(manager, connector_id)
     return None
+
+
+@router.get("/{connector_id}/modbus-server-registers/export")
+def export_modbus_server_registers(connector_id: int, db: Session = Depends(get_db)):
+    connector = _get_connector_or_404(db, connector_id)
+    _require_type(connector, models.ConnectorType.MODBUS_TCP_SERVER)
+    fields = ["name", "area", "address", "data_type", "word_order", "expression", "enabled"]
+    rows = [{
+        "name": r.name, "area": r.area.value if hasattr(r.area, "value") else r.area, "address": r.address,
+        "data_type": r.data_type, "word_order": r.word_order, "expression": r.expression, "enabled": r.enabled,
+    } for r in connector.modbus_server_registers]
+    csv_text = write_csv(fields, rows)
+    return Response(content=csv_text, media_type="text/csv",
+                     headers={"Content-Disposition": f'attachment; filename="{connector.name}_registers.csv"'})
+
+
+@router.post("/{connector_id}/modbus-server-registers/import", response_model=schemas.ImportResult)
+async def import_modbus_server_registers(connector_id: int, file: UploadFile = File(...),
+                                          db: Session = Depends(get_db),
+                                          manager: DriverManager = Depends(get_driver_manager)):
+    connector = _get_connector_or_404(db, connector_id)
+    _require_type(connector, models.ConnectorType.MODBUS_TCP_SERVER)
+    rows = read_csv((await file.read()).decode("utf-8-sig"))
+    existing_by_key = {(r.area, r.address): r for r in connector.modbus_server_registers}
+    created = updated = 0
+    errors: list[str] = []
+
+    for i, row in enumerate(rows, start=2):
+        try:
+            name = (row.get("name") or "").strip()
+            if not name:
+                raise ValueError("name is required")
+            area_str = (row.get("area") or "").strip()
+            address = int(row["address"])
+            payload = schemas.ModbusServerRegisterIn(
+                name=name, area=area_str, address=address,
+                data_type=(row.get("data_type") or "uint16").strip(),
+                word_order=(row.get("word_order") or "ABCD").strip(),
+                expression=(row.get("expression") or "").strip(),
+                enabled=parse_bool(row.get("enabled"), True),
+            )
+            expr_err = _expression_error(payload.expression)
+            if expr_err:
+                raise ValueError(f"invalid expression: {expr_err}")
+        except Exception as exc:  # noqa: BLE001 - collected as a per-row import error
+            errors.append(f"row {i}: {exc}")
+            continue
+
+        key = (models.ModbusArea(area_str), address)
+        existing = existing_by_key.get(key)
+        if existing is not None:
+            for field, value in payload.model_dump().items():
+                setattr(existing, field, value)
+            updated += 1
+        else:
+            db.add(models.ModbusServerRegister(connector_id=connector_id, **payload.model_dump()))
+            created += 1
+
+    db.commit()
+    await _restart_if_running(manager, connector_id)
+    return schemas.ImportResult(created=created, updated=updated, errors=errors)
 
 
 # ---------------------------------------------------------------------------
@@ -323,7 +463,7 @@ def list_opcua_client_nodes(connector_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/{connector_id}/opcua-client-nodes", response_model=schemas.OpcUaClientNodeOut, status_code=201)
-async def create_opcua_client_node(connector_id: int, payload: schemas.OpcUaClientNodeIn,
+async def create_opcua_client_node(connector_id: int, payload: schemas.OpcUaClientNodeIn, restart: bool = Query(True),
                                     db: Session = Depends(get_db), manager: DriverManager = Depends(get_driver_manager)):
     connector = _get_connector_or_404(db, connector_id)
     _require_type(connector, models.ConnectorType.OPCUA_CLIENT)
@@ -334,12 +474,14 @@ async def create_opcua_client_node(connector_id: int, payload: schemas.OpcUaClie
     db.add(node)
     db.commit()
     db.refresh(node)
-    await _restart_if_running(manager, connector_id)
+    if restart:
+        await _restart_if_running(manager, connector_id)
     return node
 
 
 @router.put("/{connector_id}/opcua-client-nodes/{node_id}", response_model=schemas.OpcUaClientNodeOut)
 async def update_opcua_client_node(connector_id: int, node_id: int, payload: schemas.OpcUaClientNodeIn,
+                                    restart: bool = Query(True),
                                     db: Session = Depends(get_db), manager: DriverManager = Depends(get_driver_manager)):
     node = db.get(models.OpcUaClientNode, node_id)
     if node is None or node.connector_id != connector_id:
@@ -352,20 +494,82 @@ async def update_opcua_client_node(connector_id: int, node_id: int, payload: sch
         setattr(node, field, value)
     db.commit()
     db.refresh(node)
-    await _restart_if_running(manager, connector_id)
+    if restart:
+        await _restart_if_running(manager, connector_id)
     return node
 
 
 @router.delete("/{connector_id}/opcua-client-nodes/{node_id}", status_code=204)
-async def delete_opcua_client_node(connector_id: int, node_id: int, db: Session = Depends(get_db),
+async def delete_opcua_client_node(connector_id: int, node_id: int, restart: bool = Query(True),
+                                    db: Session = Depends(get_db),
                                     manager: DriverManager = Depends(get_driver_manager)):
     node = db.get(models.OpcUaClientNode, node_id)
     if node is None or node.connector_id != connector_id:
         raise HTTPException(404, "node not found")
     db.delete(node)
     db.commit()
-    await _restart_if_running(manager, connector_id)
+    if restart:
+        await _restart_if_running(manager, connector_id)
     return None
+
+
+@router.get("/{connector_id}/opcua-client-nodes/export")
+def export_opcua_client_nodes(connector_id: int, db: Session = Depends(get_db)):
+    connector = _get_connector_or_404(db, connector_id)
+    _require_type(connector, models.ConnectorType.OPCUA_CLIENT)
+    fields = ["tag_name", "node_id", "factor", "offset", "enabled", "description"]
+    rows = [{
+        "tag_name": n.tag_name, "node_id": n.node_id, "factor": n.factor, "offset": n.offset,
+        "enabled": n.enabled, "description": n.description or "",
+    } for n in connector.opcua_client_nodes]
+    csv_text = write_csv(fields, rows)
+    return Response(content=csv_text, media_type="text/csv",
+                     headers={"Content-Disposition": f'attachment; filename="{connector.name}_nodes.csv"'})
+
+
+@router.post("/{connector_id}/opcua-client-nodes/import", response_model=schemas.ImportResult)
+async def import_opcua_client_nodes(connector_id: int, file: UploadFile = File(...),
+                                     db: Session = Depends(get_db),
+                                     manager: DriverManager = Depends(get_driver_manager)):
+    connector = _get_connector_or_404(db, connector_id)
+    _require_type(connector, models.ConnectorType.OPCUA_CLIENT)
+    rows = read_csv((await file.read()).decode("utf-8-sig"))
+    existing_by_tag = {n.tag_name: n for n in connector.opcua_client_nodes}
+    created = updated = 0
+    errors: list[str] = []
+
+    for i, row in enumerate(rows, start=2):
+        tag_name = (row.get("tag_name") or "").strip()
+        try:
+            if not tag_name:
+                raise ValueError("tag_name is required")
+            node_id = (row.get("node_id") or "").strip()
+            if not node_id:
+                raise ValueError("node_id is required")
+            payload = schemas.OpcUaClientNodeIn(
+                tag_name=tag_name, node_id=node_id,
+                factor=parse_float(row.get("factor"), 1.0), offset=parse_float(row.get("offset"), 0.0),
+                enabled=parse_bool(row.get("enabled"), True), description=(row.get("description") or None),
+            )
+        except Exception as exc:  # noqa: BLE001 - collected as a per-row import error
+            errors.append(f"row {i}: {exc}")
+            continue
+
+        existing = existing_by_tag.get(tag_name)
+        if existing is not None:
+            for field, value in payload.model_dump().items():
+                setattr(existing, field, value)
+            updated += 1
+        else:
+            if db.query(models.ModbusClientRegister).filter(models.ModbusClientRegister.tag_name == tag_name).first():
+                errors.append(f"row {i}: tag name '{tag_name}' is already used by a Modbus register")
+                continue
+            db.add(models.OpcUaClientNode(connector_id=connector_id, **payload.model_dump()))
+            created += 1
+
+    db.commit()
+    await _restart_if_running(manager, connector_id)
+    return schemas.ImportResult(created=created, updated=updated, errors=errors)
 
 
 # ---------------------------------------------------------------------------
@@ -381,7 +585,7 @@ def list_opcua_server_nodes(connector_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/{connector_id}/opcua-server-nodes", response_model=schemas.OpcUaServerNodeOut, status_code=201)
-async def create_opcua_server_node(connector_id: int, payload: schemas.OpcUaServerNodeIn,
+async def create_opcua_server_node(connector_id: int, payload: schemas.OpcUaServerNodeIn, restart: bool = Query(True),
                                     db: Session = Depends(get_db), manager: DriverManager = Depends(get_driver_manager)):
     connector = _get_connector_or_404(db, connector_id)
     _require_type(connector, models.ConnectorType.OPCUA_SERVER)
@@ -390,12 +594,14 @@ async def create_opcua_server_node(connector_id: int, payload: schemas.OpcUaServ
     db.add(node)
     db.commit()
     db.refresh(node)
-    await _restart_if_running(manager, connector_id)
+    if restart:
+        await _restart_if_running(manager, connector_id)
     return node
 
 
 @router.put("/{connector_id}/opcua-server-nodes/{node_id}", response_model=schemas.OpcUaServerNodeOut)
 async def update_opcua_server_node(connector_id: int, node_id: int, payload: schemas.OpcUaServerNodeIn,
+                                    restart: bool = Query(True),
                                     db: Session = Depends(get_db), manager: DriverManager = Depends(get_driver_manager)):
     node = db.get(models.OpcUaServerNode, node_id)
     if node is None or node.connector_id != connector_id:
@@ -405,17 +611,73 @@ async def update_opcua_server_node(connector_id: int, node_id: int, payload: sch
         setattr(node, field, value)
     db.commit()
     db.refresh(node)
-    await _restart_if_running(manager, connector_id)
+    if restart:
+        await _restart_if_running(manager, connector_id)
     return node
 
 
 @router.delete("/{connector_id}/opcua-server-nodes/{node_id}", status_code=204)
-async def delete_opcua_server_node(connector_id: int, node_id: int, db: Session = Depends(get_db),
+async def delete_opcua_server_node(connector_id: int, node_id: int, restart: bool = Query(True),
+                                    db: Session = Depends(get_db),
                                     manager: DriverManager = Depends(get_driver_manager)):
     node = db.get(models.OpcUaServerNode, node_id)
     if node is None or node.connector_id != connector_id:
         raise HTTPException(404, "node not found")
     db.delete(node)
     db.commit()
-    await _restart_if_running(manager, connector_id)
+    if restart:
+        await _restart_if_running(manager, connector_id)
     return None
+
+
+@router.get("/{connector_id}/opcua-server-nodes/export")
+def export_opcua_server_nodes(connector_id: int, db: Session = Depends(get_db)):
+    connector = _get_connector_or_404(db, connector_id)
+    _require_type(connector, models.ConnectorType.OPCUA_SERVER)
+    fields = ["node_name", "expression", "enabled"]
+    rows = [{"node_name": n.node_name, "expression": n.expression, "enabled": n.enabled}
+            for n in connector.opcua_server_nodes]
+    csv_text = write_csv(fields, rows)
+    return Response(content=csv_text, media_type="text/csv",
+                     headers={"Content-Disposition": f'attachment; filename="{connector.name}_nodes.csv"'})
+
+
+@router.post("/{connector_id}/opcua-server-nodes/import", response_model=schemas.ImportResult)
+async def import_opcua_server_nodes(connector_id: int, file: UploadFile = File(...),
+                                     db: Session = Depends(get_db),
+                                     manager: DriverManager = Depends(get_driver_manager)):
+    connector = _get_connector_or_404(db, connector_id)
+    _require_type(connector, models.ConnectorType.OPCUA_SERVER)
+    rows = read_csv((await file.read()).decode("utf-8-sig"))
+    existing_by_name = {n.node_name: n for n in connector.opcua_server_nodes}
+    created = updated = 0
+    errors: list[str] = []
+
+    for i, row in enumerate(rows, start=2):
+        try:
+            node_name = (row.get("node_name") or "").strip()
+            if not node_name:
+                raise ValueError("node_name is required")
+            payload = schemas.OpcUaServerNodeIn(
+                node_name=node_name, expression=(row.get("expression") or "").strip(),
+                enabled=parse_bool(row.get("enabled"), True),
+            )
+            expr_err = _expression_error(payload.expression)
+            if expr_err:
+                raise ValueError(f"invalid expression: {expr_err}")
+        except Exception as exc:  # noqa: BLE001 - collected as a per-row import error
+            errors.append(f"row {i}: {exc}")
+            continue
+
+        existing = existing_by_name.get(node_name)
+        if existing is not None:
+            for field, value in payload.model_dump().items():
+                setattr(existing, field, value)
+            updated += 1
+        else:
+            db.add(models.OpcUaServerNode(connector_id=connector_id, **payload.model_dump()))
+            created += 1
+
+    db.commit()
+    await _restart_if_running(manager, connector_id)
+    return schemas.ImportResult(created=created, updated=updated, errors=errors)
